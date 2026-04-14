@@ -8,7 +8,80 @@ import re
 # =========================
 INPUT_FOLDER = "../dataset/result/output_loc-v1/output"
 OUTPUT_FOLDER = "clean_json"
-KAMUS_LOKASI = "lokasi.json"
+KAMUS_LOKASI = "kamus_lokasi.json"
+KAMUS_SUPER = "kamus_super_wilayah.json"
+
+FILENAME_CODE_MAP = [
+    # Jakarta — spesifik dulu
+    (r'JKT[~\s]*UT[R]?',   'DKI Jakarta',        'Jakarta Utara'),
+    (r'JKT[~\s]*BRT',      'DKI Jakarta',        'Jakarta Barat'),
+    (r'JKT[~\s]*TIM',      'DKI Jakarta',        'Jakarta Timur'),
+    (r'JKT[~\s]*SEL',      'DKI Jakarta',        'Jakarta Selatan'),
+    (r'JKT[~\s]*PST',      'DKI Jakarta',        'Jakarta Pusat'),
+    (r'JAK[~\s]*SEL',      'DKI Jakarta',        'Jakarta Selatan'),
+    (r'JKTSEL',            'DKI Jakarta',        'Jakarta Selatan'),
+    (r'\bJKT\b',           'DKI Jakarta',        'Jakarta'),
+    (r'\bDKI\b',           'DKI Jakarta',        'Jakarta'),
+    # Bali
+    (r'\bDPS\b',           'Bali',               'Denpasar'),
+    # Maluku
+    (r'\bAMB\b',           'Maluku',             'Ambon'),
+    # Maluku Utara
+    (r'\bTBK\b',           'Maluku Utara',       'Tobelo'),
+    # Jawa Timur
+    (r'\bPLH\b',           'Jawa Timur',         'Sidoarjo'),
+    (r'\bMLN\b',           'Jawa Timur',         'Malang'),
+    (r'\bTUB\b',           'Jawa Timur',         'Tulungagung'),
+    # Jawa Tengah
+    (r'\bSMG\b',           'Jawa Tengah',        'Semarang'),
+    # Jawa Barat
+    (r'\bTAS\b',           'Jawa Barat',         'Tasikmalaya'),
+    (r'\bBAN\b',           'Jawa Barat',         'Bandung'),
+    # DI Yogyakarta
+    (r'\bBTL\b',           'DI Yogyakarta',      'Bantul'),
+    # Banten
+    (r'\bBTN\b',           'Banten',             'Banten'),
+    (r'\bTBNN\b',          'Banten',             'Tigaraksa'),
+    # Sulawesi Selatan
+    (r'\bMKS\b',           'Sulawesi Selatan',   'Makassar'),
+    # Sulawesi Tengah
+    (r'\bPLI\b',           'Sulawesi Tengah',    'Palu'),
+    (r'\bDGL\b',           'Sulawesi Tengah',    'Donggala'),
+    # Sulawesi Tenggara / lainnya
+    (r'\bSON\b',           'Nusa Tenggara Timur','Soe'),
+    (r'\bSGT\b',           'Kalimantan Timur',   'Sangatta'),
+    (r'\bSMR\b',           'Kalimantan Timur',   'Samarinda'),
+    # Kalimantan Barat
+    (r'\bPTS\b',           'Kalimantan Barat',   'Pontianak'),
+    (r'\bPLW\b',           'Kalimantan Tengah',  'Palangka Raya'),
+    (r'\bKLB\b',           'Nusa Tenggara Timur','Kalabahi'),
+    # Sumatera Utara
+    (r'\bMDN\b',           'Sumatera Utara',     'Medan'),
+    (r'\bLTK\b',           'Sumatera Utara',     'Langkat'),
+    (r'PT[~\s]*MDN',       'Sumatera Utara',     'Medan'),
+    (r'PTMDN',             'Sumatera Utara',     'Medan'),
+    # Aceh
+    (r'\bSBH\b',           'Aceh',               'Sabang'),
+    # Papua
+    (r'\bNAB\b',           'Papua',              'Nabire'),
+    # Riau / Kalimantan
+    (r'\bRHL\b',           'Riau',               'Rokan Hulu'),
+    # Jawa Tengah
+    (r'\bPR\b',            'Jawa Tengah',        'Purworejo'),
+    # Jambi
+    (r'PT[~\s]*JMB|\bJMB\b', 'Jambi',           'Jambi'),
+    # PT DKI (banding)
+    (r'PT[~\s]*DKI|PTDKI',  'DKI Jakarta',       'Jakarta'),
+    # SDN — PN Sukadana (Kayong Utara, Kalimantan Barat)
+    (r'\bSDN\b',           'Kalimantan Barat',   'Sukadana'),
+    # PM = Pengadilan Militer — PM I-04 = Palembang (Sumatera Selatan)
+    (r'PM[~\s]*I[~\s]*04', 'Sumatera Selatan',   'Palembang'),
+    # putusan_xxx_pn_jkt.utr / pn_.jkt_utr
+    (r'JKT[._\s]*UTR',     'DKI Jakarta',        'Jakarta Utara'),
+    (r'JKT[._\s]*BRT',     'DKI Jakarta',        'Jakarta Barat'),
+    (r'JKT[._\s]*TIM',     'DKI Jakarta',        'Jakarta Timur'),
+    (r'JKT[._\s]*SEL',     'DKI Jakarta',        'Jakarta Selatan'),
+]
 
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
@@ -30,6 +103,14 @@ try:
 except Exception as e:
     print("Gagal memuat kamus lokasi: ", e)
     exit()
+
+PROVINCE_TO_CITIES = {}
+for city, prov in CITY_TO_PROVINCE.items():
+    if city.lower() not in PROVINCE_NAMES:
+        PROVINCE_TO_CITIES.setdefault(prov, []).append(city)
+
+for prov in PROVINCE_TO_CITIES:
+    PROVINCE_TO_CITIES[prov].sort(key=len, reverse=True)
 
 # =========================
 # FUNGSI BARU: EKSTRAKSI WAKTU AKTIVITAS
@@ -64,58 +145,124 @@ def fix_typos(text):
 def extract_location(raw_text):
     if not raw_text or str(raw_text).strip() == '':
         return None, None
+    
+    wilayah_match = re.search(r'\(Wilayah:\s*(.*?)\)', str(raw_text), flags=re.IGNORECASE)
+    wilayah_text = wilayah_match.group(1) if wilayah_match else ""
 
-    cleaned = clean_halaman(raw_text)
-    cleaned = fix_typos(cleaned)
+    cleaned_main = clean_halaman(raw_text)
+    cleaned_main = fix_typos(cleaned_main)
 
-    if cleaned.lower() in FOREIGN_LOCATIONS:
-        return 'Luar Negeri', cleaned
+    def search_in_text(text_to_search):
+        if not text_to_search:
+            return None, None
+        
+        if text_to_search.lower() in FOREIGN_LOCATIONS:
+            return 'Luar Negeri', text_to_search
 
-    key = cleaned.lower()
-    if key in MANUAL_MAP:
-        return MANUAL_MAP[key]
+        key = text_to_search.lower()
+        if key in MANUAL_MAP:
+            return MANUAL_MAP[key]
 
-    for city, prov in CITY_TO_PROVINCE.items():
-        if cleaned.lower() == city.lower():
-            kab = '' if cleaned.lower() in PROVINCE_NAMES else cleaned
-            return prov, kab
-
-    for city, prov in CITY_TO_PROVINCE.items():
-        if city.lower() not in PROVINCE_NAMES: 
-            pattern = r'\b' + re.escape(city) + r'\b'
-            if re.search(pattern, cleaned, flags=re.IGNORECASE):
-                return prov, city
+        for city, prov in CITY_TO_PROVINCE.items():
+            if text_to_search.lower() == city.lower():
+                kab = '' if text_to_search.lower() in PROVINCE_NAMES else text_to_search
+                return prov, kab
+            
+        for city, prov in CITY_TO_PROVINCE.items():
+            if city.lower() not in PROVINCE_NAMES: 
+                pattern = r'\b' + re.escape(city) + r'\b'
+                if re.search(pattern, text_to_search, flags=re.IGNORECASE):
+                    return prov, city
                 
-    for prov_name in PROVINCE_NAMES:
-        if re.search(r'\b' + re.escape(prov_name) + r'\b', cleaned, flags=re.IGNORECASE):
-            for k, v in CITY_TO_PROVINCE.items():
-                if v.lower() == prov_name:
-                    return v, None 
+        for prov_name in PROVINCE_NAMES:
+            if re.search(r'\b' + re.escape(prov_name) + r'\b', text_to_search, flags=re.IGNORECASE):
+                for k, v in CITY_TO_PROVINCE.items():
+                    if v.lower() == prov_name:
+                        return v, None
+    
+        return None, None
+    
+    prov, kota = search_in_text(cleaned_main)
+    if prov is None and wilayah_text:
+        cleaned_wilayah = re.sub(r'\s*\(Halaman\s*[\d]+\)', '', wilayah_text, flags=re.IGNORECASE).strip()
+        cleaned_wilayah = fix_typos(cleaned_wilayah)
 
-    return None, None
+        prov, kota = search_in_text(cleaned_wilayah)
+    
+    return prov, kota
 
-def enrich_activities(obj):
+def enrich_activities(data):
+    what_obj = data.get("what", {})
     activity_keys = ['pelatihan_activities', 'perencanaan_activities', 'tindakan_activities']
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k in activity_keys and isinstance(v, list):
-                for item in v:
-                    if isinstance(item, dict):
-                        if 'time' in item:
-                            time_text = item['time']
-                            item['estimated_year'] = extract_year(time_text)
-                            item['estimated_month'] = extract_month(time_text)
-                        if 'location' in item:
-                            loc_text = item['location']
-                            prov, kota = extract_location(loc_text)
-                            item['estimated_province'] = prov
-                            item['estimated_city'] = kota
-            else:
-                enrich_activities(v)
-    elif isinstance(obj, list):
-        for item in obj:
-            enrich_activities(item)
-    return obj
+    
+    for act_key in activity_keys:
+        if act_key in what_obj and isinstance(what_obj[act_key], list):
+            for item in what_obj[act_key]:
+                if isinstance(item, dict):
+                    if 'time' in item:
+                        item['estimated_year'] = extract_year(item['time'])
+                        item['estimated_month'] = extract_month(item['time'])
+                    
+                    if 'location' in item:
+                        prov, kota = extract_location(item['location'])
+                        item['estimated_province'] = prov
+                        item['estimated_city'] = kota
+
+
+    final_prov_network = data.get("who", {}).get("provinsi_jaringan")
+    final_kota_network = data.get("who", {}).get("kota_jaringan")
+
+    for act_key in activity_keys:
+        if act_key in what_obj and isinstance(what_obj[act_key], list):
+            for item in what_obj[act_key]:
+                if isinstance(item, dict):
+                    prov = item.get('estimated_province')
+                    kota = item.get('estimated_city')
+                    loc_source = str(item.get('location_source', ''))
+
+                    if kota is None or str(kota).strip() == '':
+                        
+                        if 'description' in item and prov:
+                            kota_dari_desc = extract_kota_from_activity_for_province(item['description'], prov)
+                            if kota_dari_desc:
+                                item['estimated_city'] = kota_dari_desc
+                                continue 
+
+                        if 'Tier 4' in loc_source or 'local_network' in loc_source:
+                            
+                            if not prov and final_prov_network and final_prov_network != 'Unknown':
+                                item['estimated_province'] = final_prov_network
+                                
+                            if final_kota_network and final_kota_network not in ('Unknown', 'tidak disebutkan'):
+                                item['estimated_city'] = final_kota_network
+
+    return data
+
+def extract_kota_from_activity_for_province(activity_text, known_province):
+    """Cari kota/kab spesifik dari where_activity_locations untuk provinsi yang sudah diketahui."""
+    if pd.isna(activity_text) or known_province is None:
+        return None
+
+    cities_in_province = PROVINCE_TO_CITIES.get(known_province, [])
+    if not cities_in_province:
+        return None
+
+    entries = [e.strip() for e in str(activity_text).split('---')]
+    for entry in entries:
+        for city in cities_in_province:
+            pattern = r'\b' + re.escape(city) + r'\b'
+            if re.search(pattern, entry, flags=re.IGNORECASE):
+                return city
+    return None
+
+def extract_province_from_filename(filename):
+    if pd.isna(filename):
+        return None, None
+    fn = str(filename).upper().replace('~', ' ').replace('.', ' ')
+    for pat, prov, kota in FILENAME_CODE_MAP:
+        if re.search(pat, fn, flags=re.IGNORECASE):
+            return prov, kota
+    return None, None
 
 
 # =========================
@@ -263,6 +410,69 @@ def process_file(data):
     ideology_raw = data["who"].get("defendant_ideology_affiliation")
     data["who"]["defendant_ideology_affiliation"] = normalize_ideology(ideology_raw)
 
+    raw_network = data["who"].get("defendant_local_network")
+
+
+    what_obj = data.get("what", {})
+    activity_keys = ['pelatihan_activities', 'perencanaan_activities', 'tindakan_activities']
+    
+    filename = data.get("file_name", data.get("what", {}).get("case_number", ""))
+
+    prov, kota = extract_location(raw_network)
+    source = 'local_network'
+
+    # TAHAP 2: Jika dari local_network gagal, cari langsung di ketiga aktivitas
+    if prov is None:
+        for act_key in activity_keys:
+            # PERBAIKAN: Gunakan what_obj, bukan data
+            if act_key in what_obj and isinstance(what_obj[act_key], list):
+                for item in what_obj[act_key]:
+                    if isinstance(item, dict) and 'location' in item:
+                        prov, kota = extract_location(item['location'])
+                        if prov:
+                            source = act_key 
+                            break
+                if prov: break
+            if prov: break
+
+    # TAHAP 3: Tebak dari nama file
+    if prov is None:
+        prov, kota = extract_province_from_filename(filename)
+        if prov:
+            source = 'file_name'
+
+    # TAHAP 4: Mentok
+    if prov is None:
+        prov = 'Unknown'
+        kota = 'Unknown'
+        source = 'tidak_diketahui'
+
+    # TAHAP 5: Tambal Sulam Kota (Upgrade kota jika kosong)
+    if prov not in ('Unknown', 'Luar Negeri') and (kota is None or str(kota).strip() == ''):
+        kota_found = False
+
+        for act_key in activity_keys:
+            # PERBAIKAN: Gunakan what_obj, bukan data
+            if act_key in what_obj and isinstance(what_obj[act_key], list):
+                for item in what_obj[act_key]:
+                    if isinstance(item, dict) and 'location' in item:
+                        # Obrak-abrik teks location ini mencari nama kota Banten
+                        k = extract_kota_from_activity_for_province(item['location'], prov)
+                        if k:
+                            kota = k
+                            nama_sumber_bersih = act_key.replace('_activities', '')
+                            source = f"{source}+kota_dari_{nama_sumber_bersih}"
+                            kota_found = True
+                            break
+                if kota_found: break
+            if kota_found: break
+            
+        if not kota_found:
+            kota = 'tidak disebutkan'
+
+    # Simpan hasil akhir ke dalam JSON
+    data["who"]["provinsi_jaringan"] = prov
+    data["who"]["kota_jaringan"] = kota
 
     return data
 
