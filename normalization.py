@@ -91,10 +91,11 @@ try:
         
     TYPO_FIX = kamus_data.get("TYPO_FIX", {})
     CITY_TO_PROVINCE = kamus_data.get("CITY_TO_PROVINCE", {})
-    
     FOREIGN_LOCATIONS = set(kamus_data.get("FOREIGN_LOCATIONS", []))
-    
     MANUAL_MAP = {k: tuple(v) for k, v in kamus_data.get("MANUAL_MAP", {}).items()}
+
+    with open(KAMUS_SUPER, 'r', encoding='utf-8') as f:
+        MASTER_WILAYAH = json.load(f)
 
     PROVINCE_NAMES = {v.lower() for v in CITY_TO_PROVINCE.values()} | {'kaltim', 'sumatra utara'}
 
@@ -156,16 +157,17 @@ def extract_location(raw_text):
         if not text_to_search:
             return None, None
         
-        if text_to_search.lower() in FOREIGN_LOCATIONS:
+        text_lower = text_to_search.lower()
+        
+        if text_lower in FOREIGN_LOCATIONS:
             return 'Luar Negeri', text_to_search
 
-        key = text_to_search.lower()
-        if key in MANUAL_MAP:
-            return MANUAL_MAP[key]
+        if text_lower in MANUAL_MAP:
+            return MANUAL_MAP[text_lower]
 
         for city, prov in CITY_TO_PROVINCE.items():
-            if text_to_search.lower() == city.lower():
-                kab = '' if text_to_search.lower() in PROVINCE_NAMES else text_to_search
+            if text_lower == city.lower():
+                kab = '' if text_lower in PROVINCE_NAMES else text_to_search
                 return prov, kab
             
         for city, prov in CITY_TO_PROVINCE.items():
@@ -179,6 +181,15 @@ def extract_location(raw_text):
                 for k, v in CITY_TO_PROVINCE.items():
                     if v.lower() == prov_name:
                         return v, None
+
+        
+        words = re.findall(r'\b\w+\b', text_lower)
+        for n in [4, 3, 2]:
+            if len(words) >= n:
+                for i in range(len(words) - n + 1):
+                    phrase = " ".join(words[i:i+n])
+                    if phrase in MASTER_WILAYAH:
+                        return MASTER_WILAYAH[phrase]["prov"], MASTER_WILAYAH[phrase]["kota"]
     
         return None, None
     
