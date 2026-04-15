@@ -90,14 +90,16 @@ try:
         kamus_data = json.load(f)
         
     TYPO_FIX = kamus_data.get("TYPO_FIX", {})
-    CITY_TO_PROVINCE = kamus_data.get("CITY_TO_PROVINCE", {})
-    FOREIGN_LOCATIONS = set(kamus_data.get("FOREIGN_LOCATIONS", []))
-    MANUAL_MAP = {k: tuple(v) for k, v in kamus_data.get("MANUAL_MAP", {}).items()}
+    CITY_TO_PROVINCE = {k.lower(): v for k, v in kamus_data.get("CITY_TO_PROVINCE", {}).items()}
+    FOREIGN_LOCATIONS = {loc.lower() for loc in kamus_data.get("FOREIGN_LOCATIONS", [])}
+    MANUAL_MAP = {k.lower(): tuple(v) for k, v in kamus_data.get("MANUAL_MAP", {}).items()}
 
     with open(KAMUS_SUPER, 'r', encoding='utf-8') as f:
-        MASTER_WILAYAH = json.load(f)
+        raw_master = json.load(f)
+        MASTER_WILAYAH = {k.lower(): v for k, v in raw_master.items()}
 
-    PROVINCE_NAMES = {v.lower() for v in CITY_TO_PROVINCE.values()} | {'kaltim', 'sumatra utara'}
+    PROVINCE_NAMES = {v["prov"].lower() for v in MASTER_WILAYAH.values()}
+    PROVINCE_NAMES.update({'kaltim', 'sumatra utara', 'sumatra barat', 'sumatera barat'})
 
     print("Kamus lokasi berhasil dimuat!")
 
@@ -106,12 +108,16 @@ except Exception as e:
     exit()
 
 PROVINCE_TO_CITIES = {}
-for city, prov in CITY_TO_PROVINCE.items():
-    if city.lower() not in PROVINCE_NAMES:
-        PROVINCE_TO_CITIES.setdefault(prov, []).append(city)
+for wilayah, data_wil in MASTER_WILAYAH.items():
+    prov = data_wil["prov"]
+    kota = data_wil["kota"]
+    if prov and kota:
+        if prov not in PROVINCE_TO_CITIES:
+            PROVINCE_TO_CITIES[prov] = set()
+        PROVINCE_TO_CITIES[prov].add(wilayah.title()) 
 
 for prov in PROVINCE_TO_CITIES:
-    PROVINCE_TO_CITIES[prov].sort(key=len, reverse=True)
+    PROVINCE_TO_CITIES[prov] = sorted(list(PROVINCE_TO_CITIES[prov]), key=len, reverse=True)
 
 # =========================
 # FUNGSI BARU: EKSTRAKSI WAKTU AKTIVITAS
@@ -158,46 +164,43 @@ def extract_location(raw_text):
             return None, None
         
         text_lower = text_to_search.lower()
-        
         if text_lower in FOREIGN_LOCATIONS:
             return 'Luar Negeri', text_to_search
-
+        
         if text_lower in MANUAL_MAP:
             return MANUAL_MAP[text_lower]
 
-        for city, prov in CITY_TO_PROVINCE.items():
-            if text_lower == city.lower():
-                kab = '' if text_lower in PROVINCE_NAMES else text_to_search
-                return prov, kab
-            
-        for city, prov in CITY_TO_PROVINCE.items():
-            if city.lower() not in PROVINCE_NAMES: 
-                pattern = r'\b' + re.escape(city) + r'\b'
-                if re.search(pattern, text_to_search, flags=re.IGNORECASE):
-                    return prov, city
-                
-        for prov_name in PROVINCE_NAMES:
-            if re.search(r'\b' + re.escape(prov_name) + r'\b', text_to_search, flags=re.IGNORECASE):
-                for k, v in CITY_TO_PROVINCE.items():
-                    if v.lower() == prov_name:
-                        return v, None
-
-        
         words = re.findall(r'\b\w+\b', text_lower)
-        for n in [4, 3, 2]:
+        for n in [4, 3, 2]: 
             if len(words) >= n:
                 for i in range(len(words) - n + 1):
                     phrase = " ".join(words[i:i+n])
                     if phrase in MASTER_WILAYAH:
+                        # Langsung return jika ketemu kelurahan yang terdaftar
                         return MASTER_WILAYAH[phrase]["prov"], MASTER_WILAYAH[phrase]["kota"]
+
+        for city, prov in CITY_TO_PROVINCE.items():
+            if text_lower == city:
+                kab = '' if text_lower in PROVINCE_NAMES else text_to_search.title()
+                return prov, kab
+
+        for city, prov in CITY_TO_PROVINCE.items():
+            if city not in PROVINCE_NAMES: 
+                if re.search(r'\b' + re.escape(city) + r'\b', text_lower):
+                    return prov, city.title()
+                
+        for prov_name in PROVINCE_NAMES:
+            if re.search(r'\b' + re.escape(prov_name) + r'\b', text_lower):
+                for k, v in CITY_TO_PROVINCE.items():
+                    if v.lower() == prov_name:
+                        return v, None
+                return prov_name.title(), None
     
         return None, None
     
     prov, kota = search_in_text(cleaned_main)
     if prov is None and wilayah_text:
-        cleaned_wilayah = re.sub(r'\s*\(Halaman\s*[\d]+\)', '', wilayah_text, flags=re.IGNORECASE).strip()
-        cleaned_wilayah = fix_typos(cleaned_wilayah)
-
+        cleaned_wilayah = fix_typos(re.sub(r'\s*\(Halaman\s*[\d]+\)', '', wilayah_text, flags=re.IGNORECASE).strip())
         prov, kota = search_in_text(cleaned_wilayah)
     
     return prov, kota
