@@ -166,37 +166,55 @@ def extract_location(raw_text):
         text_lower = text_to_search.lower()
         if text_lower in FOREIGN_LOCATIONS:
             return 'Luar Negeri', text_to_search
-        
         if text_lower in MANUAL_MAP:
             return MANUAL_MAP[text_lower]
 
-        words = re.findall(r'\b\w+\b', text_lower)
-        for n in [4, 3, 2]: 
-            if len(words) >= n:
-                for i in range(len(words) - n + 1):
-                    phrase = " ".join(words[i:i+n])
-                    if phrase in MASTER_WILAYAH:
-                        # Langsung return jika ketemu kelurahan yang terdaftar
-                        return MASTER_WILAYAH[phrase]["prov"], MASTER_WILAYAH[phrase]["kota"]
-
-        for city, prov in CITY_TO_PROVINCE.items():
-            if text_lower == city:
-                kab = '' if text_lower in PROVINCE_NAMES else text_to_search.title()
-                return prov, kab
-
-        for city, prov in CITY_TO_PROVINCE.items():
-            if city not in PROVINCE_NAMES: 
-                if re.search(r'\b' + re.escape(city) + r'\b', text_lower):
-                    return prov, city.title()
-                
+        # 1. Identifikasi semua Provinsi yang disebut secara eksplisit di teks
+        # Ini untuk verifikasi (Confirmation)
+        mentioned_provinces = []
         for prov_name in PROVINCE_NAMES:
             if re.search(r'\b' + re.escape(prov_name) + r'\b', text_lower):
-                for k, v in CITY_TO_PROVINCE.items():
-                    if v.lower() == prov_name:
-                        return v, None
-                return prov_name.title(), None
-    
-        return None, None
+                mentioned_provinces.append(prov_name)
+
+        # 2. Cari semua kandidat lokasi dari Master Wilayah
+        words = re.findall(r'\b\w+\b', text_lower)
+        candidates = []
+        
+        for n in [4, 3, 2, 1]:
+            for i in range(len(words) - n + 1):
+                phrase = " ".join(words[i:i+n])
+                if phrase in MASTER_WILAYAH:
+                    res_prov = MASTER_WILAYAH[phrase]["prov"]
+                    res_kota = MASTER_WILAYAH[phrase]["kota"]
+                    
+                    # HITUNG SKOR KANDIDAT
+                    score = n * 10 # Semakin panjang frasa, semakin bagus
+                    
+                    # BONUS: Jika Provinsinya cocok dengan yang disebut di teks
+                    if res_prov.lower() in mentioned_provinces:
+                        score += 100 
+                        
+                    # BONUS: Jika dia adalah nama Kota resmi (bukan cuma kelurahan)
+                    if phrase in CITY_TO_PROVINCE:
+                        score += 20
+                    
+                    # BONUS: Prioritas kata yang lebih ke kanan (akhir kalimat)
+                    score += i 
+
+                    candidates.append({
+                        'prov': res_prov,
+                        'kota': res_kota if phrase not in PROVINCE_NAMES else None,
+                        'score': score
+                    })
+
+        if not candidates:
+            return None, None
+
+        # Pilih kandidat dengan skor tertinggi
+        candidates.sort(key=lambda x: x['score'], reverse=True)
+        best = candidates[0]
+        
+        return best['prov'], best['kota']
     
     prov, kota = search_in_text(cleaned_main)
     if prov is None and wilayah_text:
@@ -364,6 +382,121 @@ def normalize_ideology(x):
 
     return " | ".join(sorted(result)) if result else "Tidak Diketahui"
 
+def classify_source(x):
+    if not x or str(x).strip().lower() in ["", "unknown", "tidak diketahui"]:
+        return "Data Tidak Lengkap"
+    
+    x = str(x).lower()
+    if any(k in x for k in ["video","isis","daulah","peperangan","eksekusi","rilisan","youtube"]):
+        return "Video/Konten Digital ISIS"
+    if any(k in x for k in ["facebook","whatsapp","telegram","group","grup","channel",
+                              "media sosial","medsos","akun","instagram","website","internet","online"]):
+        return "Media Sosial/Chat"
+    if any(k in x for k in ["kajian","pengajian","ustadz","ceramah","majelis","halaqah",
+                              "tarbiyah","taklim","tabligh","dakwah","tauhid","jihad","hijrah"]):
+        return "Kajian/Pengajian Informal"
+    if any(k in x for k in ["pesantren","ponpes","yayasan","pondok"]):
+        return "Pondok/Yayasan"
+    if any(k in x for k in ["buku","materi","cd","audio","majalah","artikel"]):
+        return "Materi Fisik"
+    if any(k in x for k in ["pengaruh","komunikasi","keluarga","baiat","amir","jamaah","kelompok","mit","ji"]):
+        return "Pengaruh/Jaringan"
+    
+    return "Lainnya"
+
+def classify_radicalization_channel(raw_sources):
+    if not raw_sources:
+        return "Data Tidak Lengkap"
+    
+    if isinstance(raw_sources, list):
+        gabungan_teks = " ".join([str(item) for item in raw_sources]).lower()
+    else:
+        gabungan_teks = str(raw_sources).lower()
+        
+    if gabungan_teks.strip() in ["", "unknown", "tidak diketahui"]:
+        return "Data Tidak Lengkap"
+    
+    DIGITAL_KW = [
+        "facebook","whatsapp","telegram","grup","group","channel",
+        "media sosial","medsos","youtube","video","internet","online","akun", "digital"
+    ]
+
+    OFFLINE_KW = [
+        "kajian","pengajian","ustadz","ceramah","majelis","pesantren",
+        "pondok","tatap muka","langsung","halaqah", "masjid"
+    ]
+
+    has_d = any(k in gabungan_teks for k in DIGITAL_KW)
+    has_o = any(k in gabungan_teks for k in OFFLINE_KW)
+
+    if has_d and has_o:
+        return "Hybrid"
+    elif has_d:
+        return "Online"
+    elif has_o:
+        return "Offline"
+    
+    return "Lainnya"
+
+
+def classify_motivation(x):
+    if not x or str(x).strip().lower() in ["", "unknown", "tidak diketahui"]:
+        return "Data Tidak Lengkap"
+    
+    x = str(x).lower()
+    if any(k in x for k in ["syariat","syari'at","islam","agama","daulah","khilafah"]):
+        return "Tegaknya Syariat/Daulah Islam"
+    if any(k in x for k in ["hijrah","bergabung isis","bergabung daulah"]):
+        return "Hijrah ke Daulah"
+    if any(k in x for k in ["jihad","berjihad","mujahid"]):
+        return "Jihad Fisik"
+    if any(k in x for k in ["balas","dendam","sakit hati"]):
+        return "Balas Dendam"
+    if any(k in x for k in ["organisasi","kelompok","jaringan","loyalitas"]):
+        return "Loyalitas Organisasi/Kelompok"
+    if any(k in x for k in ["tidak puas","antipati","pemerintah","kebijakan"]):
+        return "Antipati terhadap Pemerintah"
+    if any(k in x for k in ["menyesal","ikut-ikut","pengaruh","terpaksa"]):
+        return "Pengaruh Eksternal"
+    
+    return "Lainnya"
+
+def classify_aggravating(x):
+    if not x or str(x).strip().lower() in ["", "unknown", "tidak diketahui"]:
+        return "Data Tidak Lengkap"
+    
+    x = str(x).lower()
+    if any(k in x for k in ["keresahan","ketertiban","masyarakat"]):
+        return "Keresahan Masyarakat"
+    if any(k in x for k in ["korban massal","massa","banyak korban"]):
+        return "Potensi Korban Massal"
+    if any(k in x for k in ["dampak","meluas","luas","nasional","internasional"]):
+        return "Dampak Meluas"
+    if any(k in x for k in ["berencana","terencana","sistematis"]):
+        return "Terencana/Sistematis"
+    
+    return "Lainnya"
+
+def process_and_classify_list(raw_list, classify_func):
+    if not raw_list:
+        return []
+    
+    if isinstance(raw_list, str):
+        raw_list = [raw_list]
+
+    categories  = set()
+    for source in raw_list:
+        parts = str(source).split("\n---\n")
+        for part in parts:
+            part_clean = part.strip()
+
+            if len(part_clean) > 3:
+                kategori = classify_func(part_clean)
+                if kategori not in ["Data Tidak Lengkap"]:
+                    categories.add(kategori)
+
+    return sorted(list(categories))
+
 
 # =========================
 # PROCESS PER FILE
@@ -488,6 +621,24 @@ def process_file(data):
     data["who"]["provinsi_jaringan"] = prov
     data["who"]["kota_jaringan"] = kota
 
+    if "why" not in data or not isinstance(data["why"], dict):
+        data["why"] = {}
+
+    raw_rad_sources = data["why"].get("radicalization_sources", [])
+    data["why"]["classified_radicalization_sources"] = process_and_classify_list(raw_rad_sources, classify_source) 
+
+    channel_result = classify_radicalization_channel(raw_rad_sources)
+    if channel_result not in ["Data Tidak Lengkap", "Lainnya"]:
+        data["why"]["radicalization_channel"] = channel_result
+    else:
+        data["why"]["radicalization_channel"] = ""
+
+    raw_motivation = data["why"].get("motivation_factors", [])
+    data["why"]["classified_motivation_factors"] = process_and_classify_list(raw_motivation, classify_motivation)
+
+    raw_aggravating = data["why"].get("aggravating_factors", [])
+    data["why"]["classified_aggravating_factors"] = process_and_classify_list(raw_aggravating, classify_aggravating)
+    
     return data
 
 

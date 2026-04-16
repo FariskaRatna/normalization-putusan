@@ -1,3 +1,7 @@
 clean_json/
 cleaned_json_data/
 __pycache__/
+matched_json/
+matched_pdf/
+pdf_match/
+data/
