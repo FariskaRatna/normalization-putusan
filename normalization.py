@@ -83,6 +83,21 @@ FILENAME_CODE_MAP = [
     (r'JKT[._\s]*SEL',     'DKI Jakarta',        'Jakarta Selatan'),
 ]
 
+BULAN_MAP = {
+    "januari": 1, "jan": 1,
+    "februari": 2, "feb": 2, "pebruari": 2,
+    "maret": 3, "mar": 3,
+    "april": 4, "apr": 4,
+    "mei": 5,
+    "juni": 6, "jun": 6,
+    "juli": 7, "jul": 7,
+    "agustus": 8, "agu": 8, "agt": 8,
+    "september": 9, "sep": 9, "sept": 9,
+    "oktober": 10, "okt": 10,
+    "november": 11, "nov": 11, "nopember": 11,
+    "desember": 12, "des": 12
+}
+
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 try:
@@ -223,6 +238,44 @@ def extract_location(raw_text):
     
     return prov, kota
 
+def extract_time_info(text):
+    if not text or str(text).strip() in ["", "unknown", "tidak diketahui"]:
+        return {"year": None, "month": None}
+    
+    text_lower = str(text).lower()
+
+    year_match = re.search(r"\b(19|20)\d{2}\b", text_lower)
+    year = int(year_match.group()) if year_match else None
+
+    month = None
+    for nama_bulan, angka in BULAN_MAP.items():
+        if re.search(r"\b" + nama_bulan + r"\b", text_lower):
+            month = angka
+            break
+
+    return {"year": year, "month": month}
+
+def process_temporal_list(raw_list):
+    if not raw_list:
+        return []
+    
+    if isinstance(raw_list, str):
+        raw_list = [raw_list]
+        
+    hasil = []
+    for item in raw_list:
+        parts = str(item).split("\n---\n")
+        for part in parts:
+            part_clean = part.strip()
+            if len(part_clean) > 3:
+                waktu = extract_time_info(part_clean)
+                hasil.append({
+                    "aktivitas": part_clean,
+                    "tahun": waktu["year"],
+                    "bulan": waktu["month"]
+                })
+    return hasil
+
 def enrich_activities(data):
     what_obj = data.get("what", {})
     activity_keys = ['pelatihan_activities', 'perencanaan_activities', 'tindakan_activities']
@@ -297,9 +350,48 @@ def extract_province_from_filename(filename):
     return None, None
 
 
-# =========================
-# FUNGSI LAMA (TIDAK DIUBAH SAMA SEKALI)
-# =========================
+def normalize_charged_articles(data):
+
+    raw_articles = data.get("charged_articles", [])
+    if not raw_articles and "what" in data and isinstance(data["what"], dict):
+        raw_articles = data["what"].get("charged_articles", [])
+
+    if not raw_articles or not isinstance(raw_articles, list):
+        return data
+
+    cleaned_articles = set()
+
+    for raw_text in raw_articles:
+        text = str(raw_text).lower().replace("menja di", "menjadi")
+        
+        pasal_match = re.search(r'(pasal\s+\d+[a-z]*(\s*jo\.?\s*pasal\s+\d+[a-z]*)?)', text)
+        pasal_str = ""
+        if pasal_match:
+            pasal_str = pasal_match.group(1).replace("jo", " jo. ").replace(" .", ".").strip()
+            pasal_str = re.sub(r'\s+', ' ', pasal_str).title().replace("Jo.", "jo.")
+
+        uu_str = "UU Tidak Teridentifikasi"
+        if any(tahun in text for tahun in ["2002", "2003", "2018"]) and "terorisme" in text:
+            uu_str = "UU Pemberantasan Tindak Pidana Terorisme"
+        elif "2013" in text and "pendanaan" in text:
+            uu_str = "UU Pencegahan dan Pemberantasan Pendanaan Terorisme"
+        elif "darurat" in text or "1951" in text:
+            uu_str = "UU Darurat No. 12 Tahun 1951"
+
+        # Gabungkan
+        if pasal_str:
+            cleaned_articles.add(f"{pasal_str} {uu_str}")
+        else:
+            cleaned_articles.add(uu_str)
+
+    if "what" not in data or not isinstance(data["what"], dict):
+        data["what"] = {}
+        
+    data["what"]["normalized_articles"] = list(cleaned_articles)
+    
+    return data
+
+
 def safe_parse_date(x):
     if not x:
         return pd.NaT
@@ -497,6 +589,66 @@ def process_and_classify_list(raw_list, classify_func):
 
     return sorted(list(categories))
 
+def normalize_evidence_items(data):
+    what_obj = data.get("what", {})
+    
+    if not isinstance(what_obj, dict):
+        return data
+        
+    items = what_obj.get("evidence_items", [])
+    
+    if not isinstance(items, list) or not items:
+        return data
+    
+    for item in items:
+        raw_desc = str(item.get("description", "")).lower().strip()
+
+        category = "other"
+        clean_name = raw_desc
+
+        if any(k in raw_desc for k in ["pcp", "moser", "predator", "shotgun", "senapan angin"]):
+            category = "weapon"
+            clean_name = "Senjata Angin PCP"
+        elif any(k in raw_desc for k in ["revolver", "pistol", "rakitan", "fn", "m16", "laras panjang"]):
+            category = "weapon"
+            clean_name = "Senjata Api / Amunisi"
+        elif any(k in raw_desc for k in ["parang", "golok", "samurai", "pisau", "celurit", "sangkur"]):
+            category = "weapon"
+            clean_name = "Senjata Tajam"
+
+        elif any(k in raw_desc for k in ["bom", "handak", "detonator", "belerang", "mesiu", "black powder"]):
+            category = "explosive"
+            clean_name = "Bahan Peledak / Komponen Bom"
+
+        elif any(k in raw_desc for k in ["hp", "handphone", "ponsel", "nokia", "samsung", "xiaomi", "sim card"]):
+            category = "phone"
+            clean_name = "Telepon Seluler / SIM Card"
+        elif any(k in raw_desc for k in ["laptop", "flashdisk", "harddisk", "memory card", "cpu"]):
+            category = "other" # Atau buat kategori 'electronic' jika ada di SQL
+            clean_name = "Perangkat Digital / Penyimpanan"
+
+        elif any(k in raw_desc for k in ["buku", "kitab", "dokumen", "selebaran", "buletin", "paspor", "ktp"]):
+            category = "document"
+            clean_name = "Buku / Dokumen Fisik"
+
+        elif any(k in raw_desc for k in ["uang", "rupiah", "cash", "atm", "rekening", "dolar"]):
+            category = "cash"
+            clean_name = "Uang Tunai / Instrumen Keuangan"
+
+        elif any(k in raw_desc for k in ["motor", "mobil", "stnk", "bpkb"]):
+            category = "vehicle"
+            clean_name = "Kendaraan Bermotor"
+
+        item["normalized_name"] = clean_name.title()
+        item["item_category"] = category
+
+        try:
+            item["quantity"] = int(item.get("quantity", 1))
+        except:
+            item["quantity"] = 1
+
+    return data
+
 
 # =========================
 # PROCESS PER FILE
@@ -638,6 +790,21 @@ def process_file(data):
 
     raw_aggravating = data["why"].get("aggravating_factors", [])
     data["why"]["classified_aggravating_factors"] = process_and_classify_list(raw_aggravating, classify_aggravating)
+
+    if "what" not in data or not isinstance(data["what"], dict):
+        data["what"] = {}
+
+    raw_perencanaan = data["what"].get("perencanaan_activities", [])
+    raw_pelatihan = data["what"].get("pelatihan_activities", [])
+    raw_tindakan = data["what"].get("tindakan_activities", [])
+
+    # data["what"]["enriched_perencanaan"] = process_temporal_list(raw_perencanaan)
+    # data["what"]["enriched_pelatihan"] = process_temporal_list(raw_pelatihan)
+    # data["what"]["enriched_tindakan"] = process_temporal_list(raw_tindakan)
+
+    data = normalize_evidence_items(data)
+
+    data = normalize_charged_articles(data)
     
     return data
 

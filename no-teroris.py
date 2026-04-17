@@ -2,9 +2,9 @@ import os
 import shutil
 import pandas as pd
 
-excel_file = "no-teroris-2.xlsx"
-pdf_root_folder = "unknown_mitigating_pdfs"
-output_folder = "matched_pdf_mitigating/"
+excel_file = "narkotika.xlsx"
+pdf_root_folder = "no-terroris/"
+output_folder = "narkotika/"
 
 os.makedirs(output_folder, exist_ok=True)
 
