@@ -62,6 +62,6 @@ def convert_json_to_excel(input_folder: str, output_excel: str):
     print("✅ Berhasil! File Excel sudah jauh lebih rapi.")
 
 if __name__ == "__main__":
-    INPUT_JSON_DIR = "../dataset/result/output_loc-v1/output/"
-    OUTPUT_EXCEL_FILE = "rekap_data_terorisme_loc_v3.xlsx"
+    INPUT_JSON_DIR = "output/"
+    OUTPUT_EXCEL_FILE = "rekap_data_terorisme_loc_v5.xlsx"
     convert_json_to_excel(INPUT_JSON_DIR, OUTPUT_EXCEL_FILE)

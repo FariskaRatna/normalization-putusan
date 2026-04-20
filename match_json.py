@@ -12,7 +12,7 @@ pdf_names = set()
 
 for root, dirs, files in os.walk(pdf_root_folder):
     for file in files:
-        if file.endswith(".pdf"):
+        if file.endswith(".json"):
             pdf_name = os.path.splitext(file)[0]
             pdf_names.add(pdf_name)
 

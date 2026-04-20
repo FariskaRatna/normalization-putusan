@@ -6,4 +6,8 @@ matched_pdf/
 pdf_match/
 data/
 narkotika/
-no-terroris/
+no-teroris/
+all-data/
+output/
+no-charge/
+imputed_json/

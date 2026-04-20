@@ -6,7 +6,7 @@ import re
 # =========================
 # CONFIG
 # =========================
-INPUT_FOLDER = "../dataset/result/output_loc-v1/output"
+INPUT_FOLDER = "imputed_json"
 OUTPUT_FOLDER = "clean_json"
 KAMUS_LOKASI = "kamus_lokasi.json"
 KAMUS_SUPER = "kamus_super_wilayah.json"
@@ -351,44 +351,99 @@ def extract_province_from_filename(filename):
 
 
 def normalize_charged_articles(data):
-
-    raw_articles = data.get("charged_articles", [])
-    if not raw_articles and "what" in data and isinstance(data["what"], dict):
-        raw_articles = data["what"].get("charged_articles", [])
+    what_block = data.get("what", {})
+    if not isinstance(what_block, dict):
+        what_block = {}
+        
+    raw_articles = what_block.get("charged_articles", [])
+    if not raw_articles:
+        raw_articles = data.get("charged_articles", [])
 
     if not raw_articles or not isinstance(raw_articles, list):
+        if "what" not in data:
+            data["what"] = {}
+
+        data["what"]["normalized_articles"] = ["Tidak Diketahui"]
         return data
 
-    cleaned_articles = set()
+    combined_text = " ".join([str(r).lower() for r in raw_articles])
+    global_law = "UU Terorisme" # Default fallback
+    
+    if any(k in combined_text for k in ["terorisme", "perpu", "15 tahun 2003", "5 tahun 2018"]):
+        global_law = "UU Terorisme"
+    elif "pendanaan" in combined_text or "9 tahun 2013" in combined_text:
+        global_law = "UU Pendanaan Terorisme"
+    elif "kuhp" in combined_text:
+        global_law = "KUHP"
+    elif "darurat" in combined_text or "12 tahun 1951" in combined_text:
+        global_law = "UU Darurat No. 12 Tahun 1951"
+
+    cleaned_results = set()
+    has_specific_pasal = False
 
     for raw_text in raw_articles:
-        text = str(raw_text).lower().replace("menja di", "menjadi")
+        text = str(raw_text).lower().replace("menja di", "menjadi").strip()
         
-        pasal_match = re.search(r'(pasal\s+\d+[a-z]*(\s*jo\.?\s*pasal\s+\d+[a-z]*)?)', text)
-        pasal_str = ""
+        # 3. Ekstraksi Pasal
+        pattern = r'(pasal\s+\d+[a-z]*(\s+huruf\s+[a-z])?(\s+ayat\s*\(\d+\))?(\s*jo\.?\s*pasal\s+\d+[a-z]*(\s+huruf\s+[a-z])?)?)'
+        pasal_match = re.search(pattern, text)
+        
         if pasal_match:
-            pasal_str = pasal_match.group(1).replace("jo", " jo. ").replace(" .", ".").strip()
-            pasal_str = re.sub(r'\s+', ' ', pasal_str).title().replace("Jo.", "jo.")
-
-        uu_str = "UU Tidak Teridentifikasi"
-        if any(tahun in text for tahun in ["2002", "2003", "2018"]) and "terorisme" in text:
-            uu_str = "UU Pemberantasan Tindak Pidana Terorisme"
-        elif "2013" in text and "pendanaan" in text:
-            uu_str = "UU Pencegahan dan Pemberantasan Pendanaan Terorisme"
-        elif "darurat" in text or "1951" in text:
-            uu_str = "UU Darurat No. 12 Tahun 1951"
-
-        # Gabungkan
-        if pasal_str:
-            cleaned_articles.add(f"{pasal_str} {uu_str}")
+            has_specific_pasal = True
+            pasal_raw = pasal_match.group(1)
+            
+            pasal_clean = re.sub(r'jo\.+', 'jo', pasal_raw) 
+            pasal_clean = pasal_clean.replace("jo", "jo.")
+            final_pasal = re.sub(r'\s+', ' ', pasal_clean).strip().title().replace("Jo.", "jo.")
+            
+            local_law = ""
+            if any(k in text for k in ["terorisme", "perpu", "15 tahun 2003", "5 tahun 2018"]):
+                local_law = "UU Terorisme"
+            elif "pendanaan" in text or "9 tahun 2013" in text:
+                local_law = "UU Pendanaan Terorisme"
+            elif "kuhp" in text:
+                local_law = "KUHP"
+            elif "darurat" in text or "12 tahun 1951" in text:
+                local_law = "UU Darurat No. 12 Tahun 1951"
+            else:
+                local_law = global_law
+            
+            cleaned_results.add(f"{final_pasal} {local_law}".strip())
+            
         else:
-            cleaned_articles.add(uu_str)
+            pass
 
-    if "what" not in data or not isinstance(data["what"], dict):
+    if not has_specific_pasal and global_law:
+        cleaned_results.add(global_law)
+
+    # 5. Simpan Hasil
+    if "what" not in data:
         data["what"] = {}
         
-    data["what"]["normalized_articles"] = list(cleaned_articles)
+    data["what"]["normalized_articles"] = sorted(list(cleaned_results))
     
+    return data
+
+def normalize_court_info(data):
+    where_block = data.get("where", {})
+    
+    raw_court_name = where_block.get("district_court", "")
+    
+    if raw_court_name and raw_court_name != "Tidak Diketahui":
+        prov, kota = extract_location(raw_court_name)
+        
+        # Kita timpa atau isi field hasil normalisasi
+        where_block["normalized_court_province"] = prov
+        where_block["normalized_court_city"] = kota
+        
+        where_block["court_location"] = kota 
+    else:
+        if "normalized_court_province" not in where_block:
+            where_block["normalized_court_province"] = "Tidak Diketahui"
+        if "normalized_court_city" not in where_block:
+            where_block["normalized_court_city"] = "Tidak Diketahui"
+
+    data["where"] = where_block
     return data
 
 
@@ -649,6 +704,136 @@ def normalize_evidence_items(data):
 
     return data
 
+def normalize_people_names(data):
+    if "who" not in data or not isinstance(data["who"], dict):
+        data["who"] = {}
+    
+    who_block = data["who"]
+    defendants = who_block.get("defendants", [])
+    
+    if not isinstance(defendants, list) or not defendants:
+        who_block["defendants"] = [{
+            "name": "Tidak Diketahui",
+            "normalized_name": "Tidak Diketahui",
+            "gender": "Tidak Diketahui",
+            "religion": "Tidak Diketahui",
+            "occupation": "Tidak Diketahui",
+            "education_status": "Tidak Diketahui",
+            "dob": None
+        }]
+    else:
+        for person in defendants:
+            fields_to_check = [
+                'name', 'alias', 'gender', 'pob', 'dob', 'age', 
+                'religion', 'nationality', 'occupation', 
+                'education_status', 'address', 'nik', 'passport_no', 'kk_no'
+            ]
+            
+            for field in fields_to_check:
+                val = str(person.get(field, "")).strip()
+                if not val or val.lower() in ["", "-", "null", "none"]:
+                    person[field] = None if field == 'dob' else "Tidak Diketahui"
+
+            raw_dob = person.get("dob")
+            if raw_dob is not None and raw_dob != "Tidak Diketahui":
+                dob_str = str(raw_dob).lower().strip()
+                
+                for indo_month, month_num in BULAN_MAP.items():
+                    dob_str = re.sub(rf'\b{indo_month}\b', f"-{month_num}-", dob_str)
+                
+                dob_str = re.sub(r'[\s/.,\\]+', '-', dob_str)
+                dob_str = re.sub(r'-+', '-', dob_str).strip('-')
+                
+                parsed_dob = safe_parse_date(dob_str)
+                person["dob"] = parsed_dob.strftime("%Y-%m-%d") if pd.notna(parsed_dob) else None
+
+            raw_name = person.get("name", "")
+            if raw_name:
+                clean_name = re.sub(r'\s+', ' ', str(raw_name)).strip()
+                person["normalized_name"] = clean_name.title()
+
+            gender = str(person.get("gender", "")).lower()
+            if "laki" in gender or gender in ["pria", "l"]:
+                person["gender"] = "Laki-laki"
+            elif "perempuan" in gender or gender in ["wanita", "p"]:
+                person["gender"] = "Perempuan"
+            else:
+                person["gender"] = "Tidak Diketahui"
+
+            religion = str(person.get("religion", "")).lower()
+            religions_map = {
+                "islam": "Islam",
+                "kristen": "Kristen",
+                "hindu": "Hindu",
+                "katolik": "Katolik",
+                "budha": "Budha"
+            }
+            person["religion"] = "Tidak Diketahui"
+            for k, v in religions_map.items():
+                if k in religion:
+                    person["religion"] = v
+                    break
+
+            edu = str(person.get("education_status", "")).strip()
+            if edu in ["", "-", "null", "none"]:
+                person["education_status"] = "Tidak Diketahui"
+
+    co_def = data.get("co_defendants", []) or who_block.get("co_defendants", [])
+    
+    if not co_def or not isinstance(co_def, list):
+        who_block["normalized_co_defendants"] = ["Tidak Diketahui"]
+    else:
+        clean_co_def = []
+        for raw_name in co_def:
+            clean = re.split(r'\s+(?:alias|als|bin|binti)\s+', str(raw_name).lower())[0]
+            clean = re.sub(r'\b(ustad|pak haji|haji|ibu|bapak)\b', '', clean).strip()
+            
+            if clean:
+                clean_co_def.append(clean.title())
+            
+        if not clean_co_def:
+            who_block["normalized_co_defendants"] = ["Tidak Diketahui"]
+        else:
+            who_block["normalized_co_defendants"] = sorted(list(set(clean_co_def)))
+
+    return data
+
+import re
+
+def extract_clean_officials(raw_data):
+    if not raw_data or raw_data == "" or raw_data == [""]:
+        return ["Tidak Diketahui"]
+        
+    if isinstance(raw_data, list):
+        text = ", ".join([str(x) for x in raw_data if x])
+    else:
+        text = str(raw_data)
+        
+    # 1. SPLIT DULU berdasarkn koma (karena koma memisahkan orang atau gelar)
+    raw_chunks = text.split(',')
+    
+    clean_names = []
+    
+    regex_gelar_standar = r'\b(dr|prof|ir|drs|dra|hj|h|s\.?\s*h|m\.?\s*h|c\.?\s*n|bc\.?\s*ip|m\.?\s*s|m\.?\s*m|s\.?\s*e|s\.?\s*pd)\b\.?'
+    # Regex khusus gelar pakai kurung seperti CLL (S). Tidak pakai \b di akhir karena tutup kurung bukan karakter kata.
+    regex_gelar_kurung = r'\bcll\s*\([a-z]\)\.?'
+    
+    for chunk in raw_chunks:
+        chunk = re.sub(r'\bdan\b', '', chunk, flags=re.IGNORECASE)
+        
+        chunk = re.sub(regex_gelar_standar, '', chunk, flags=re.IGNORECASE)
+        chunk = re.sub(regex_gelar_kurung, '', chunk, flags=re.IGNORECASE)
+        
+        chunk = re.sub(r'[^a-zA-Z\s]', '', chunk)
+        chunk = re.sub(r'\s+', ' ', chunk).strip()
+        
+        if len(chunk) > 2 and chunk.lower() != "tidak diketahui":
+            clean_names.append(chunk.title())
+            
+    if not clean_names:
+        return ["Tidak Diketahui"]
+        
+    return sorted(list(set(clean_names)))
 
 # =========================
 # PROCESS PER FILE
@@ -802,9 +987,20 @@ def process_file(data):
     # data["what"]["enriched_pelatihan"] = process_temporal_list(raw_pelatihan)
     # data["what"]["enriched_tindakan"] = process_temporal_list(raw_tindakan)
 
-    data = normalize_evidence_items(data)
+    defense_counsels = data["who"].get("defense_counsels")
+    judges = data["who"].get("judges")
+    clerk = data["who"].get("clerk")
+    prosecutors = data["who"].get("prosecutors")
 
+    data["who"]["normalized_defense_counsels"] = extract_clean_officials(defense_counsels)
+    data["who"]["normalized_judges"] = extract_clean_officials(judges)
+    data["who"]["normalized_clerk"] = extract_clean_officials(clerk)
+    data["who"]["normalized_prosecutors"] = extract_clean_officials(prosecutors)
+
+    data = normalize_evidence_items(data)
     data = normalize_charged_articles(data)
+    data = normalize_people_names(data)
+    data = normalize_court_info(data)
     
     return data
 
