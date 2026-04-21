@@ -424,24 +424,86 @@ def normalize_charged_articles(data):
     
     return data
 
+def is_valid_court_name(raw_text):
+    if not raw_text or str(raw_text).lower() == "tidak diketahui":
+        return "Tidak Diketahui"
+    
+    text_lower = raw_text.lower()
+    
+    valid_prefixes = ["pengadilan negeri", "pengadilan tinggi", "mahkamah agung", "pn ", "pt "]
+    if not any(p in text_lower for p in valid_prefixes):
+        return False 
+        
+    noise_words = [
+        'sejak', 'yang', 'memeriksa', 'mengadili', 'perkara', 
+        'atau', 'tempat', 'lain', 'di', 'dari', 'dan', 'klas', 'sebagai', 'untuk'
+    ]
+    if any(n in text_lower for n in noise_words):
+        return False
+        
+    return True
+
+def clean_noisy_court(raw_text):
+    if not raw_text or str(raw_text).lower() == "tidak diketahui":
+        return "Tidak Diketahui"
+    
+    text = re.sub(r'\bMe\s+dan\b', 'Medan', str(raw_text), flags=re.IGNORECASE)
+    match = re.search(r'(?i)(Pengadilan\s+Negeri|PN)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+){0,2})', text)
+    
+    if match:
+        potential_city = match.group(2).strip()
+
+        noise_words = [
+            'sejak', 'yang', 'memeriksa', 'mengadili', 'perkara', 
+            'atau', 'tempat', 'lain', 'di', 'dari', 'dan', 'klas', 'sebagai', 'untuk'
+        ]
+
+        clean_words = []
+        for word in potential_city.split():
+            if word.lower() in noise_words:
+                break 
+            clean_words.append(word)
+            
+        clean_city_name = " ".join(clean_words).title()
+        
+        if clean_city_name:
+            return f"Pengadilan Negeri {clean_city_name}"
+            
+    return str(raw_text).strip()
+
 def normalize_court_info(data):
     where_block = data.get("where", {})
+    what_block = data.get("what", {})
     
     raw_court_name = where_block.get("district_court", "")
+    case_number = what_block.get("case_number", "")
+    raw_location = where_block.get("court_location", "")
+    raw_what_court = what_block.get("court_name", "")
+
+    selected_raw = raw_court_name if raw_court_name and raw_court_name != "Tidak Diketahui" else \
+                    (raw_what_court if raw_what_court and raw_what_court != "Tidak Diketahui" else raw_location)
     
-    if raw_court_name and raw_court_name != "Tidak Diketahui":
-        prov, kota = extract_location(raw_court_name)
+    clean_court_name = clean_noisy_court(selected_raw)
+
+    kota_bersih = "Tidak Diketahui"
+    if clean_court_name and clean_court_name != "Tidak Diketahui":
+        prov, kota = extract_location(clean_court_name)
         
-        # Kita timpa atau isi field hasil normalisasi
         where_block["normalized_court_province"] = prov
         where_block["normalized_court_city"] = kota
         
         where_block["court_location"] = kota 
+        where_block["district_court"] = clean_court_name
+        what_block["court_name"] = clean_court_name
+        kota_bersih = kota
     else:
         if "normalized_court_province" not in where_block:
             where_block["normalized_court_province"] = "Tidak Diketahui"
         if "normalized_court_city" not in where_block:
             where_block["normalized_court_city"] = "Tidak Diketahui"
+    
+    court_code = extract_court_code(case_number, fallback_location=kota_bersih)
+    where_block["normalized_court_code"] = court_code
 
     data["where"] = where_block
     return data
@@ -815,7 +877,6 @@ def extract_clean_officials(raw_data):
     clean_names = []
     
     regex_gelar_standar = r'\b(dr|prof|ir|drs|dra|hj|h|s\.?\s*h|m\.?\s*h|c\.?\s*n|bc\.?\s*ip|m\.?\s*s|m\.?\s*m|s\.?\s*e|s\.?\s*pd)\b\.?'
-    # Regex khusus gelar pakai kurung seperti CLL (S). Tidak pakai \b di akhir karena tutup kurung bukan karakter kata.
     regex_gelar_kurung = r'\bcll\s*\([a-z]\)\.?'
     
     for chunk in raw_chunks:
@@ -834,6 +895,30 @@ def extract_clean_officials(raw_data):
         return ["Tidak Diketahui"]
         
     return sorted(list(set(clean_names)))
+
+def _generate_fallback(location_name):
+    if location_name and location_name.lower() != "tidak diketahui":
+
+        if not location_name.upper().startswith("PN"):
+            return f"PN {location_name}"
+        return location_name
+    
+    return "Kode tidak valid"
+
+def extract_court_code(case_number, fallback_location=""):
+    if not case_number or case_number.lower() == "tidak diketahui":
+        return _generate_fallback(fallback_location)
+    
+    match = re.search(r'/\d{4}/([^/]+)$', case_number.strip())
+
+    if match:
+        code = match.group(1).strip()
+        code = code.rstrip('.')
+
+        if 3 <= len(code) <= 30:
+            return code
+        
+    return _generate_fallback(fallback_location)
 
 # =========================
 # PROCESS PER FILE
