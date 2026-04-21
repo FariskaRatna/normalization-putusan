@@ -526,7 +526,13 @@ def normalize_court_info(data):
                         "KLB": ("Nusa Tenggara Timur", "Kalabahi"),
                         "SGT": ("Kalimantan Timur", "Sangatta"),
                         "MDN": ("Sumatera Utara", "Medan"),
-                        "TUB": ("Bengkulu", "Tubei")
+                        "TUB": ("Bengkulu", "Tubei"),
+                        "PTS": ("Kalimantan Barat", "Putussibau"),
+                        "TAS": ("Bengkulu", "Tais"),
+                        "LTK": ("Flores Barat", "Larantuka"),
+                        "PR": ("Kalimantan Tengah", "Kalimantan Tengah"),
+                        "SBH": ("Sumatera Utara", "Sibuhuan"),
+                        
                     }
                     
                     if clean_code.upper() in darurat_map:
