@@ -2,6 +2,7 @@ import os
 import json
 import pandas as pd
 import re
+from normalize_case_info import normalize_case_data
 
 # =========================
 # CONFIG
@@ -472,111 +473,131 @@ def clean_noisy_court(raw_text):
     return str(raw_text).strip()
 
 def normalize_court_info(data):
-    where_block = data.get("where", {})
-    what_block = data.get("what", {})
+    where_block = data.get("where") or {}
+    what_block = data.get("what") or {}
     
-    case_number = what_block.get("case_number", "")
+    case_number = what_block.get("case_number") or data.get("case_id") or ""
+    case_number = str(case_number).strip()
     raw_name = where_block.get("district_court") or what_block.get("court_name") or where_block.get("court_location") or ""
 
     def safe_val(v):
         if not v or str(v).lower() in ["none", "null", "tidak diketahui", "", "[lokasi tidak terdeteksi]"]:
             return "Tidak Diketahui"
         return str(v).strip()
+    
+    case_upper = case_number.upper()
+
+    if re.search(r'\d+\s*(K|PK)/', case_upper) or "/MA" in case_upper or "MAHKAMAH AGUNG" in str(raw_name).upper():
+        clean_name = "Mahkamah Agung RI"
+        kota, prov, code = "Jakarta Pusat", "DKI Jakarta", "MA"
+
+        where_block.update({
+            "district_court": clean_name, "court_location": kota,
+            "normalized_court_province": prov, "normalized_court_city": kota,
+            "normalized_court_code": code
+        })
+        what_block["court_name"] = clean_name
+        
+        data["where"] = where_block
+        data["what"] = what_block # Pastikan disimpan kembali!
+        return data
+
+    level = "PT" if re.search(r'\bPT\b', case_upper) else "PN"
 
     if is_valid_court_name(raw_name) and "none" not in str(raw_name).lower():
         clean_name = str(raw_name).strip()
-        if "mahkamah agung" in clean_name.lower():
-            prov, kota, code = "DKI Jakarta", "Jakarta Pusat", "MA"
-        else:
-            prov, kota = extract_location(clean_name)
-            prov, kota = safe_val(prov), safe_val(kota)
-            code = extract_court_code(case_number, fallback_location=kota, clean_court_name=clean_name)
-            
+        prov_raw, kota_raw = extract_location(clean_name)
+        prov, kota = safe_val(prov_raw), safe_val(kota_raw)
+        code = extract_court_code(case_number, fallback_location=kota, clean_court_name=clean_name)
     else:
-        # 1. Tentukan Level Peradilan
-        level = "PN"
-        if re.search(r'\d+\s*(K|PK)/', case_number.upper()) or "/MA" in case_number.upper():
-            level = "MA"
-        elif "/PT" in case_number.upper():
-            level = "PT"
-
-        if level == "MA":
-            clean_name, kota, prov, code = "Mahkamah Agung", "Jakarta Pusat", "DKI Jakarta", "MA"
-        else:
-            text_to_clean = re.sub(r'sejak|yang memeriksa|mengadili|perkara|putusan|memperhatikan|atau|tempat lain|none|null', '', str(raw_name), flags=re.IGNORECASE)
+        text_to_clean = re.sub(r'sejak|yang memeriksa|mengadili|perkara|putusan|memperhatikan|atau|tempat lain|none|null', '', str(raw_name), flags=re.IGNORECASE)
+        if text_to_clean:
             prov_raw, kota_raw = extract_location(text_to_clean)
-            prov, kota = safe_val(prov_raw), safe_val(kota_raw)
+        else:
+            prov_raw, kota_raw = None, None
+        
+        prov, kota = safe_val(prov_raw), safe_val(kota_raw)
 
-            if kota == "Tidak Diketahui" and case_number:
-                match = re.search(r'/\d{4}/([^/]+)$', case_number.strip())
-                if match:
-                    raw_code = match.group(1).strip()
-                    clean_code = re.sub(r'^(PT|PN)[\.\s]*', '', raw_code, flags=re.IGNORECASE)
-                    clean_code = re.sub(r'[^a-zA-Z0-9]', ' ', clean_code)
+        if kota == "Tidak Diketahui" and case_number:
+            match = re.search(r'/\d{4}/([^/]+)$', case_number.strip())
+            if match:
+                raw_code = match.group(1).strip()
+                clean_code = re.sub(r'^(PT|PN)[\.\s]*', '', raw_code, flags=re.IGNORECASE)
+                clean_code = re.sub(r'[^a-zA-Z0-9]', ' ', clean_code)
+                clean_code = re.sub(r'\s+', ' ', clean_code).strip().upper()
+                darurat_map = {
+                    "DKI": ("DKI Jakarta", "Jakarta Pusat"), # PT DKI lokasinya di Jakarta Pusat
+                    "JKT UTR": ("DKI Jakarta", "Jakarta Utara"),
+                    "JKT TIM": ("DKI Jakarta", "Jakarta Timur"),
+                    "JKT SEL": ("DKI Jakarta", "Jakarta Selatan"),
+                    "JKT PST": ("DKI Jakarta", "Jakarta Pusat"),
+                    "JKT BRT": ("DKI Jakarta", "Jakarta Barat"),
+                    "JMB": ("Jambi", "Jambi"),
+                    "KLB": ("Nusa Tenggara Timur", "Kalabahi"),
+                    "SGT": ("Kalimantan Timur", "Sangatta"),
+                    "MDN": ("Sumatera Utara", "Medan"),
+                    "TUB": ("Bengkulu", "Tubei"),
+                    "PTS": ("Kalimantan Barat", "Putussibau"),
+                    "TAS": ("Bengkulu", "Tais"),
+                    "LTK": ("Flores Barat", "Larantuka"),
+                    "PR": ("Kalimantan Tengah", "Kalimantan Tengah"),
+                    "SBH": ("Sumatera Utara", "Sibuhuan"),
+                    "PLW": ("Riau", "Pelalawan")
+                }
                 
-                    clean_code = re.sub(r'\s+', ' ', clean_code).strip().upper()
-                    darurat_map = {
-                        "DKI": ("DKI Jakarta", "Jakarta Pusat"), # PT DKI lokasinya di Jakarta Pusat
-                        "JKT UTR": ("DKI Jakarta", "Jakarta Utara"),
-                        "JKT TIM": ("DKI Jakarta", "Jakarta Timur"),
-                        "JKT SEL": ("DKI Jakarta", "Jakarta Selatan"),
-                        "JKT PST": ("DKI Jakarta", "Jakarta Pusat"),
-                        "JKT BRT": ("DKI Jakarta", "Jakarta Barat"),
-                        "JMB": ("Jambi", "Jambi"),
-                        "KLB": ("Nusa Tenggara Timur", "Kalabahi"),
-                        "SGT": ("Kalimantan Timur", "Sangatta"),
-                        "MDN": ("Sumatera Utara", "Medan"),
-                        "TUB": ("Bengkulu", "Tubei"),
-                        "PTS": ("Kalimantan Barat", "Putussibau"),
-                        "TAS": ("Bengkulu", "Tais"),
-                        "LTK": ("Flores Barat", "Larantuka"),
-                        "PR": ("Kalimantan Tengah", "Kalimantan Tengah"),
-                        "SBH": ("Sumatera Utara", "Sibuhuan"),
-                        
-                    }
+                if clean_code.upper() in darurat_map:
+                    prov_cad, kota_cad = darurat_map[clean_code.upper()]
+                else:
+                    prov_cad, kota_cad = extract_location(clean_code)
                     
-                    if clean_code.upper() in darurat_map:
-                        prov_cad, kota_cad = darurat_map[clean_code.upper()]
-                    else:
-                        prov_cad, kota_cad = extract_location(clean_code)
-                        
-                    prov_cad, kota_cad = safe_val(prov_cad), safe_val(kota_cad)
-                    if kota_cad != "Tidak Diketahui":
-                        prov, kota = prov_cad, kota_cad
+                prov_cad, kota_cad = safe_val(prov_cad), safe_val(kota_cad)
+                if kota_cad != "Tidak Diketahui":
+                    prov, kota = prov_cad, kota_cad
 
-            # 🌟 LAPIS 3: Cari dari Lokasi Kejadian (activity_locations)
-            if kota == "Tidak Diketahui":
-                activity_locs = where_block.get("activity_locations", [])
-                # Jika bentuknya list, kita gabungkan jadi satu teks panjang untuk dibaca extract_location
-                if isinstance(activity_locs, list):
-                    combined_locs = " ".join(activity_locs)
-                    prov_act, kota_act = extract_location(combined_locs)
-                    prov_act, kota_act = safe_val(prov_act), safe_val(kota_act)
-                    
-                    if kota_act != "Tidak Diketahui":
-                        prov, kota = prov_act, kota_act
+        if kota == "Tidak Diketahui":
+            activity_locs = where_block.get("activity_locations", [])
+            if isinstance(activity_locs, list):
+                combined_locs = " ".join(activity_locs)
+                prov_act, kota_act = extract_location(combined_locs)
+                prov_act, kota_act = safe_val(prov_act), safe_val(kota_act)
+                
+                if kota_act != "Tidak Diketahui":
+                    prov, kota = prov_act, kota_act
+
+        if kota == "Tidak Diketahui":
+            match_name = re.search(r'(?i)(?:Pengadilan\s+(?:Negeri|Tinggi)|PN|PT)\s+([a-zA-Z]+)', str(raw_name))
+            if match_name:
+                kota = match_name.group(1).strip().title()
+            elif case_number:
+                match_code = re.search(r'/\d{4}/([^/]+)$', case_number.strip())
+                if match_code:
+                    kota = re.sub(r'^(PT|PN)[\.\s]*', '', match_code.group(1).strip(), flags=re.IGNORECASE).title()
+                    kota = re.sub(r'[^a-zA-Z0-9]', '', kota)
+        
+        if level == "PT" and "Jakarta" in kota:
+            clean_name = "Pengadilan Tinggi DKI Jakarta"
+        else:
+            prefix = "Pengadilan Tinggi" if level == "PT" else "Pengadilan Negeri"
+            clean_name = f"{prefix} {kota}" if kota != "Tidak Diketahui" else f"{prefix} [Lokasi Tidak Terdeteksi]"
             
-            # 4. Susun Nama Pengadilan
-            # Jika levelnya PT, khusus untuk Jakarta, biasanya kita sebut "Pengadilan Tinggi DKI Jakarta"
-            if level == "PT" and "Jakarta" in kota:
-                clean_name = "Pengadilan Tinggi DKI Jakarta"
-            else:
-                prefix = "Pengadilan Tinggi" if level == "PT" else "Pengadilan Negeri"
-                clean_name = f"{prefix} {kota}" if kota != "Tidak Diketahui" else f"{prefix} [Lokasi Tidak Terdeteksi]"
-                
-            code = extract_court_code(case_number, fallback_location=kota, clean_court_name=clean_name)
+        code = extract_court_code(case_number, fallback_location=kota, clean_court_name=clean_name)
 
     # ==========================================
     # UPDATE JSON
     # ==========================================
-    where_block["district_court"] = clean_name
-    where_block["court_location"] = kota if kota != "Tidak Diketahui" else None
-    where_block["normalized_court_province"] = prov if prov != "Tidak Diketahui" else None
-    where_block["normalized_court_city"] = kota if kota != "Tidak Diketahui" else None
-    where_block["normalized_court_code"] = code
+    where_block.update({
+        "district_court": clean_name,
+        "court_location": kota if kota != "Tidak Diketahui" else None,
+        "normalized_court_province": prov if prov != "Tidak Diketahui" else None,
+        "normalized_court_city": kota if kota != "Tidak Diketahui" else None,
+        "normalized_court_code": code
+    })
+
     what_block["court_name"] = clean_name
+    what_block["case_number"] = case_number
     
     data["where"] = where_block
+    data["what"] = what_block
     return data
 
 
@@ -931,8 +952,6 @@ def normalize_people_names(data):
 
     return data
 
-import re
-
 def extract_clean_officials(raw_data):
     if not raw_data or raw_data == "" or raw_data == [""]:
         return ["Tidak Diketahui"]
@@ -967,18 +986,23 @@ def extract_clean_officials(raw_data):
         
     return sorted(list(set(clean_names)))
 
-def _generate_fallback(location_name):
+def _generate_fallback(location_name, clean_court_name=""):
     if location_name and location_name.lower() != "tidak diketahui":
-
-        if not location_name.upper().startswith("PN"):
-            return f"PN {location_name}"
+        
+        if clean_court_name and "tinggi" in clean_court_name.lower():
+            prefix = "PT"
+        else:
+            prefix = "PN"
+            
+        if not location_name.upper().startswith(prefix):
+            return f"{prefix} {location_name}"
         return location_name
     
     return "Kode tidak valid"
 
 def extract_court_code(case_number, fallback_location="", clean_court_name=""):
     if not case_number or case_number.lower() == "tidak diketahui":
-        return _generate_fallback(fallback_location)
+        return _generate_fallback(fallback_location, clean_court_name)
     
     match = re.search(r'/\d{4}/([^/]+)$', case_number.strip())
 
@@ -986,10 +1010,17 @@ def extract_court_code(case_number, fallback_location="", clean_court_name=""):
         code = match.group(1).strip()
         code = code.rstrip('.')
 
+        clean_code = re.sub(r'[^a-zA-Z0-9]', ' ', code)
+        clean_code = re.sub(r'^(PN|PT)(?=[a-zA-Z])', r'\1 ', clean_code, flags=re.IGNORECASE)
+        
+        clean_code = re.sub(r'\s+', ' ', clean_code).strip()
+        
+        clean_code = clean_code.upper()
+
         if 3 <= len(code) <= 30:
             return code
         
-    return _generate_fallback(fallback_location)
+    return _generate_fallback(fallback_location, clean_court_name)
 
 # =========================
 # PROCESS PER FILE
@@ -1157,6 +1188,7 @@ def process_file(data):
     data = normalize_charged_articles(data)
     data = normalize_people_names(data)
     data = normalize_court_info(data)
+    data = normalize_case_data(data)
     
     return data
 
