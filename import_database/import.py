@@ -1,6 +1,7 @@
 import json
 import psycopg2
-from psycopg2.extras import execute_values
+import os
+from psycopg2.extras import execute_values, RealDictCursor
 
 DB_CONFIG = {
     "dbname": "terrorism_metadata",
@@ -53,7 +54,7 @@ def import_entities(json_path):
                 
                 entity_id = cursor.fetchone()[0]
                 entitas_baru += 1
-                print(f"  ✨ Entitas BARU ditambahkan: '{entity_name_clean}' (ID: {entity_id})")
+                print(f"Entitas BARU ditambahkan: '{entity_name_clean}' (ID: {entity_id})")
         
         conn.commit()
         print(f"✅ Selesai! {entitas_baru} Entitas Baru, {entitas_lama} Entitas Sudah Ada.")
@@ -682,4 +683,504 @@ def import_locations_from_activities(json_path_file):
             cursor.close()
             conn.close()
 
-import_cities("19_PID~SUS_2022_PN JKT~TIM.json")
+
+def get_city_id(cursor, city_name):
+    if not city_name or city_name == "Tidak Diketahui":
+        return None
+    
+    query = "SELECT id FROM cities WHERE city_name = %s LIMIT 1"
+    cursor.execute(query, (city_name,))
+    result = cursor.fetchone()
+
+    return result['id'] if result else None
+
+def import_court(json_file_path):
+    with open(json_file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    where_block = data.get("where", {})
+
+    court_name = where_block.get("district_court")
+    court_code = where_block.get("normalized_court_code")
+    city_name = where_block.get("normalized_court_city")
+
+    if not court_name or "Tidak Diketahui" in court_name or "Data Kosong" in court_name:
+        print(f"SKIP: Data pengadilan tidak ada")
+        return
+    
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # 2. Cari City ID (Foreign Key)
+        city_id = get_city_id(cursor, city_name)
+
+        # 3. Lakukan UPSERT ke tabel courts
+        insert_query = """
+            INSERT INTO courts (court_name, court_code, court_city_id, created_at, updated_at)
+            VALUES (%s, %s, %s, NOW(), NOW())
+            ON CONFLICT (court_name) 
+            DO UPDATE SET 
+                court_code = EXCLUDED.court_code,
+                court_city_id = EXCLUDED.court_city_id,
+                updated_at = NOW()
+            RETURNING id;
+        """
+        cursor.execute(insert_query, (court_name, court_code, city_id))
+        court_id = cursor.fetchone()['id']
+        conn.commit()
+        
+        print(f"SUKSES: [{court_name}] tersimpan/terupdate dengan ID: {court_id}")
+
+    except psycopg2.Error as e:
+        print(f"DATABASE ERROR: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+def import_channel_radicalization(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    channel = data.get("why", {}).get("radicalization_channel", [])
+    if isinstance(channel, str):
+        channel = [channel]
+
+    if not channel:
+        print("Tidak ada channel radicalization di file ini")
+        return
+    
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        channel_baru = 0
+        channel_lama = 0
+
+        for channel_name in channel:
+            clean_channel_name = channel_name.strip()
+            if not clean_channel_name:
+                continue
+
+            cursor.execute("SELECT id FROM public.radicalization_channel WHERE channel_name = %s", (clean_channel_name,))
+            result = cursor.fetchone()
+
+            if result:
+                channel_id = result[0]
+                channel_lama += 1
+            else:
+                insert_query = """
+                    INSERT INTO public.radicalization_channel (channel_name, created_at, updated_at)
+                    VALUES (%s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+
+                cursor.execute(insert_query, (clean_channel_name,))
+
+                channel_id = cursor.fetchone()[0]
+                channel_baru += 1
+                print(f"Classified Motivation BARU ditambahkan: {clean_channel_name} (ID: {channel_id})")
+
+        conn.commit()
+        print(f"Selesai, {channel_baru} Baru, {channel_lama} Sudah Ada")
+
+    except Exception as e:
+        print(f"Error database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+def get_court_id(cursor, court_name):
+    if not court_name or court_name == "Tidak Diketahui":
+        return None
+    
+    query = "SELECT id FROM courts WHERE court_name = %s LIMIT 1"
+    cursor.execute(query, (court_name,))
+    result = cursor.fetchone()
+
+    return result['id'] if result else None
+
+def get_channel_id(cursor, channel_name):
+    if not channel_name or channel_name == "Tidak Diketahui":
+        return None
+    
+    query = "SELECT id FROM radicalization_channel WHERE channel_name = %s LIMIT 1"
+    cursor.execute(query, (channel_name,))
+    result = cursor.fetchone()
+
+    return result['id'] if result else None
+
+def import_cases(json_file_path):
+    with open(json_file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    what_block = data.get("what", {})
+    when_block = data.get("when", {})
+    how_much_block = data.get("how_much", {})
+    why_block = data.get("why", {})
+
+    case_number = what_block.get("case_number")
+
+    if "xxx" in case_number.lower():
+        nama_file = os.path.basename(json_file_path) # Ambil nama file-nya saja
+        case_number = f"{case_number} [Sensor: {nama_file}]"
+
+    if not case_number or case_number in ["Tidak Diketahui", "Data Kosong"]:
+        print(f"SKIP: Data Kasus tidak ada di {json_file_path}")
+        return
+    
+    court_name = what_block.get("court_name")
+    channel_name = why_block.get("radicalization_channel")
+    process_level = what_block.get("court_level")
+    indictment_model = what_block.get("indictment_model")
+    verdict_outcome = what_block.get("verdict_per_charge")
+    prison_term_years = how_much_block.get("prison_term_years")
+    prison_term_months = how_much_block.get("prison_term_months")
+    detention_credit = what_block.get("detention_credit")
+    court_date = when_block.get("district_court_date")
+    appeal_timeline = when_block.get("appeal_timeline")
+    has_attack_plan = what_block.get("has_attack_plan")
+    attack_plan_summary = what_block.get("attack_plan_summary")
+    arrest_date = when_block.get("arrest_date")
+
+    if not case_number or "Tidak Diketahui" in case_number or "Data Kosong" in case_number:
+        print(f"SKIP: Data Kasus tidak ada")
+        return
+    
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        court_id = get_court_id(cursor, court_name)
+        if not court_id:
+            print(f"GAGAL INSERT: Pengadilan '{court_name}' belum ada di DB untuk kasus {case_number}")
+            return
+        
+        channel_id = get_channel_id(cursor, channel_name)
+        if not channel_id:
+            print(f"GAGAL INSERT: Pengadilan '{channel_name}' belum ada di DB untuk kasus {case_number}")
+            return
+        
+
+        insert_query = """
+            INSERT INTO cases(case_number, court_id, id_channel, process_level, indictment_model, verdict_outcome,
+            prison_term_years, prison_term_months, detention_credit, court_date, arrest_date, appeal_timeline,
+            has_attack_plan, attack_plan_summary, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ON CONFLICT (case_number)
+            DO UPDATE SET
+                court_id = EXCLUDED.court_id, 
+                id_channel = EXCLUDED.id_channel,
+                process_level = EXCLUDED.process_level, 
+                indictment_model = EXCLUDED.indictment_model, 
+                verdict_outcome = EXCLUDED.verdict_outcome,
+                prison_term_years = EXCLUDED.prison_term_years, 
+                prison_term_months = EXCLUDED.prison_term_months, 
+                detention_credit = EXCLUDED.detention_credit, 
+                court_date = EXCLUDED.court_date, 
+                arrest_date = EXCLUDED.arrest_date, 
+                appeal_timeline = EXCLUDED.appeal_timeline,
+                has_attack_plan = EXCLUDED.has_attack_plan, 
+                attack_plan_summary = EXCLUDED.attack_plan_summary,
+                updated_at = NOW()
+            RETURNING id;
+        """
+
+        cursor.execute(insert_query, (case_number, court_id, channel_id, process_level, indictment_model, verdict_outcome,
+            prison_term_years, prison_term_months, detention_credit, court_date, arrest_date, appeal_timeline,
+            has_attack_plan, attack_plan_summary))
+        case_id = cursor.fetchone()['id']
+        conn.commit()
+
+        print(f"SUKSES: {case_number} tersimpan/terupdate dengan ID: {case_id}")
+
+    except psycopg2.Error as e:
+        print(f"DATABASE ERROR: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+def import_classified_aggravating(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    classified_aggravating = data.get("why", {}).get("classified_aggravating_factors", [])
+    if isinstance(classified_aggravating, str):
+        classified_aggravating = [classified_aggravating]
+
+    if not classified_aggravating:
+        print("Tidak ada classified_aggravating di file")
+        return
+    
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        aggravating_baru = 0
+        aggravating_lama = 0
+
+        for classified_name in classified_aggravating:
+            clean_aggravating_name = classified_name.strip()
+            if not clean_aggravating_name:
+                continue
+
+            cursor.execute("SELECT id FROM public.classified_aggravating WHERE classified_name = %s", (clean_aggravating_name,))
+            result = cursor.fetchone()
+
+            if result:
+                aggravating_id = result[0]
+                aggravating_lama += 1
+            else:
+                insert_query = """
+                    INSERT INTO public.classified_aggravating (classified_name, created_at, updated_at)
+                    VALUES (%s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+
+                cursor.execute(insert_query, (clean_aggravating_name,))
+
+                aggravating_id = cursor.fetchone()[0]
+                aggravating_baru += 1
+                print(f"Classified Aggravating BARU ditambahkan: {clean_aggravating_name} (ID: {aggravating_id})")
+
+        conn.commit()
+        print(f"Selesai, {aggravating_baru} Baru, {aggravating_lama} Sudah Ada")
+
+    except Exception as e:
+        print(f"Error database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+def import_classified_motivation(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    classified_motivation = data.get("why", {}).get("classified_motivation_factors", [])
+    if isinstance(classified_motivation, str):
+        classified_motivation = [classified_motivation]
+
+    if not classified_motivation:
+        print("Tidak ada classified_motivation di file")
+        return
+    
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        motivation_baru = 0
+        motivation_lama = 0
+
+        for classified_name in classified_motivation:
+            clean_motivation_name = classified_name.strip()
+            if not clean_motivation_name:
+                continue
+
+            cursor.execute("SELECT id FROM public.classified_motivation WHERE classified_name = %s", (clean_motivation_name,))
+            result = cursor.fetchone()
+
+            if result:
+                motivation_id = result[0]
+                motivation_lama += 1
+            else:
+                insert_query = """
+                    INSERT INTO public.classified_motivation (classified_name, created_at, updated_at)
+                    VALUES (%s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+
+                cursor.execute(insert_query, (clean_motivation_name,))
+
+                motivation_id = cursor.fetchone()[0]
+                motivation_baru += 1
+                print(f"Classified Motivation BARU ditambahkan: {clean_motivation_name} (ID: {motivation_id})")
+
+        conn.commit()
+        print(f"Selesai, {motivation_baru} Baru, {motivation_lama} Sudah Ada")
+
+    except Exception as e:
+        print(f"Error database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+def get_case_id(cursor, case):
+    if not case or case == "Tidak Diketahui":
+        return None
+    
+    query = "SELECT id FROM cases WHERE case_number = %s LIMIT 1"
+    cursor.execute(query, (case,))
+    result = cursor.fetchone()
+
+    return result['id'] if result else None
+
+def get_aggravating_id(cursor, aggravating):
+    if not aggravating:
+        return []
+
+    if isinstance(aggravating, str):
+        aggravating = [aggravating]
+
+    query = """
+        SELECT id FROM classified_aggravating 
+        WHERE classified_name = ANY(%s)
+    """
+    cursor.execute(query, (aggravating,))
+    results = cursor.fetchall()
+
+    return [r[0] for r in results]
+
+def get_motivation_id(cursor, motivation):
+    if not motivation or motivation == "Tidak Diketahui":
+        return None
+    
+    query = "SELECT id FROM classified_motivation WHERE classified_name = %s LIMIT 1"
+    cursor.execute(query, (motivation,))
+    result = cursor.fetchone()
+
+    return result['id'] if result else None
+
+def import_aggravating_factors(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    aggravating_factors = data.get("why", {}).get("aggravating_factors", [])
+    classified_name = data.get("why", {}).get("classified_motivation", None)
+    case_number = data.get("what", {}).get("case_number", None)
+
+    if isinstance(aggravating_factors, str):
+        aggravating_factors = [aggravating_factors]
+
+    if not aggravating_factors:
+        print("Tidak ada aggravating factors di file")
+        return
+    
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        aggravating_baru = 0
+        aggravating_lama = 0
+
+        id_aggravating = get_aggravating_id(cursor, classified_name)
+        id_cases = get_case_id(cursor, case_number)
+        
+        for description in aggravating_factors:
+            clean_description = description.strip()
+            if not clean_description:
+                continue
+
+            cursor.execute("SELECT id FROM public.aggravating_factors WHERE description = %s", (clean_description,))
+            result = cursor.fetchone()
+
+            if result:
+                aggravating_id = result[0]
+                aggravating_lama += 1
+            else:
+                insert_query = """
+                    INSERT INTO public.aggravating_factors (id_cases, id_aggravating, description, created_at, updated_at)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+                cursor.execute(insert_query, (id_cases, id_aggravating, clean_description,))
+                
+                aggravating_id = cursor.fetchone()[0]
+                aggravating_baru += 1
+                
+                print(f"aggravating Factor BARU ditambahkan: {clean_description} (ID: {aggravating_id})")
+
+        conn.commit()
+        print(f"Selesai: {aggravating_baru} Baru, {aggravating_lama} Sudah Ada")
+
+    except Exception as e:
+        print(f"Error database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+def import_motivation_factors(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    motivation_factors = data.get("why", {}).get("motivation_factors", [])
+    classified_name = data.get("why", {}).get("classified_motivation", None)
+
+    if isinstance(motivation_factors, str):
+        motivation_factors = [motivation_factors]
+
+    if not motivation_factors:
+        print("Tidak ada motivation factors di file")
+        return
+    
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        motivation_baru = 0
+        motivation_lama = 0
+
+        id_motivation = get_motivation_id(cursor, classified_name)
+        
+        for description in motivation_factors:
+            clean_description = description.strip()
+            if not clean_description:
+                continue
+
+            cursor.execute("SELECT id FROM public.motivation_factors WHERE description = %s", (clean_description,))
+            result = cursor.fetchone()
+
+            if result:
+                motivation_id = result[0]
+                motivation_lama += 1
+            else:
+                insert_query = """
+                    INSERT INTO public.motivation_factors (id_motivation, description, created_at, updated_at)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+                cursor.execute(insert_query, (id_motivation, clean_description,))
+                
+                motivation_id = cursor.fetchone()[0]
+                motivation_baru += 1
+                
+                print(f"Motivation Factor BARU ditambahkan: {clean_description} (ID: {motivation_id})")
+
+        conn.commit()
+        print(f"Selesai: {motivation_baru} Baru, {motivation_lama} Sudah Ada")
+
+    except Exception as e:
+        print(f"Error database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+
+import_aggravating_factors("19_PID~SUS_2022_PN JKT~TIM.json")

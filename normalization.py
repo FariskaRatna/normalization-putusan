@@ -684,119 +684,276 @@ def normalize_ideology(x):
     return " | ".join(sorted(result)) if result else "Tidak Diketahui"
 
 def classify_source(x):
-    if not x or str(x).strip().lower() in ["", "unknown", "tidak diketahui"]:
-        return "Data Tidak Lengkap"
+    if not x or str(x).strip().lower() in ["", "nan", "unknown", "tidak diketahui"]:
+        return "Tidak Diketahui"
     
-    x = str(x).lower()
-    if any(k in x for k in ["video","isis","daulah","peperangan","eksekusi","rilisan","youtube"]):
-        return "Video/Konten Digital ISIS"
-    if any(k in x for k in ["facebook","whatsapp","telegram","group","grup","channel",
-                              "media sosial","medsos","akun","instagram","website","internet","online"]):
-        return "Media Sosial/Chat"
-    if any(k in x for k in ["kajian","pengajian","ustadz","ceramah","majelis","halaqah",
-                              "tarbiyah","taklim","tabligh","dakwah","tauhid","jihad","hijrah"]):
-        return "Kajian/Pengajian Informal"
-    if any(k in x for k in ["pesantren","ponpes","yayasan","pondok"]):
-        return "Pondok/Yayasan"
-    if any(k in x for k in ["buku","materi","cd","audio","majalah","artikel"]):
-        return "Materi Fisik"
-    if any(k in x for k in ["pengaruh","komunikasi","keluarga","baiat","amir","jamaah","kelompok","mit","ji"]):
-        return "Pengaruh/Jaringan"
-    
-    return "Lainnya"
-
-def classify_radicalization_channel(raw_sources):
-    if not raw_sources:
-        return "Data Tidak Lengkap"
-    
-    if isinstance(raw_sources, list):
-        gabungan_teks = " ".join([str(item) for item in raw_sources]).lower()
-    else:
-        gabungan_teks = str(raw_sources).lower()
-        
-    if gabungan_teks.strip() in ["", "unknown", "tidak diketahui"]:
-        return "Data Tidak Lengkap"
-    
-    DIGITAL_KW = [
-        "facebook","whatsapp","telegram","grup","group","channel",
-        "media sosial","medsos","youtube","video","internet","online","akun", "digital"
+    x_lower = str(x).lower()
+    categories = set()
+    kajian_keywords = [
+        "kajian", "pengajian", "tausiah", "tausyiah", "tauziah", "ceramah",
+        "taklim", "ta'lim", "halaqoh", "halaqah", "holaqoh", "tabligh",
+        "tablig", "dakwah", "majelis", "ngaji", "materi", "mushola", "musholla",
+        "ustadz", "ustad", "ustaz", "ust.", "khotbah", "khutbah",
+        "tarbiyah", "dauroh", "daurah", "tadzkiyatun", "tazqyah",
+        "takwiyah", "siroh", "sirah", "fiah", "fiqih", "aqidah", "akidah",
+        "tafsir", "tauhid", "masjid", "mesjid", "rumah tahfiz", "kultum",
+        "muahadah", "baiat", "bai'at", "sosialisasi", "pembekalan",
+        "pembinaan", "kaderisasi", "rekrut", "pimpinan", "amir",
+        "tabliq", "bedah buku", "forum dialog", "turba",
+        "pertemuan rutin", "kajian rutin", "pengajian rutin",
+        "kajian khusus", "kajian umum", "kajian online", "majelis taklim",
+        "majelis rosul", "majlis", "pangajian", "pengisi kajian",
+        "tesa", "tam ", "tam1", "tam2", "t1 ", "t3 ", "pupji", "tastos",
+        "strataji", "manhaj", "i'dad", "idad", "tadrib", "diklat",
+        "tahapan", "tamhiz",
     ]
 
-    OFFLINE_KW = [
-        "kajian","pengajian","ustadz","ceramah","majelis","pesantren",
-        "pondok","tatap muka","langsung","halaqah", "masjid"
+    if any(k in x_lower for k in kajian_keywords):
+        categories.add("Kajian/Pengajian Informal")
+
+    digital_keywords = [
+        "facebook", "whatsapp", "telegram", "instagram", "youtube",
+        "website", "situs", "web", "blog", "internet", "online",
+        "channel", "chanel", "akun", "group", "grup", "posting", "postingan",
+        "link", "berita", "artikel", "browsing", "bot", "media sosial",
+        "medsos", "bbm", "twitter", "tiktok", "forum", "aplikasi",
+        "media online", "media elektronik", "media internet",
+        "media social", "siaran", "televisi", "tv",
+        "sms", "teleconference", "hp ", "handphone", "amn",
+        "e-book", "ebook", "mp3", "download", "upload",
+        "vice news", "arrahmah", "millahibrahim", "milah ibrahim",
+        "milla ibrahim", "al mustaqbal", "voa islam", "shotussalam",
+        "shoutus salam", "qiblat", "lasdipo", "eramuslim", "panjimas",
+        "manjanik", "ghuroba", "panji mas", "ukk", "djabeluhud",
+        "ar rahmah", "ar-rahmah",
     ]
 
-    has_d = any(k in gabungan_teks for k in DIGITAL_KW)
-    has_o = any(k in gabungan_teks for k in OFFLINE_KW)
+    if any(k in x_lower for k in digital_keywords):
+        categories.add("Media Sosial/Chat")
 
-    if has_d and has_o:
+    video_keywords = [
+        "video", "isis", "daulah", "suriah", "eksekusi", "perang",
+        "jihad", "nasyid", "mujahidin", "pembantaian", "peperangan",
+        "pemenggalan", "bom bunuh", "istisyadiah", "fa'i", "ghonimah",
+        "kemenangan", "pertempuran", "revolusi",
+    ]
+    if any(k in x_lower for k in video_keywords):
+        categories.add("Video/Konten Digital ISIS")
+
+    org_patterns = [
+        r"\b(ji|jad|nii|mmi|fpi|mit|jak|jat|garis|kompak|adira|fordi|fordai|almanar|persis|hti)\b",
+        r"jamaah islamiy", r"jamaah anshor", r"anshor daulah", r"anshor khilafah",
+        r"mujahidin indonesia", r"majelis mujahidin", r"syam organizer",
+        r"front pembela", r"hizbut tahrir", r"hizbu tahir",
+        r"aliansi masyarakat", r"nahi munkar", r"azzam dakwah",
+        r"jamaah imamah", r"jamaah ashorut",
+    ]
+    org_keywords = [
+        "organisasi", "kelompok", "jaringan", "ormas", "laskar",
+        "fkaai", "lpi", "forum komunik", "forum dialog",
+    ]
+    if any(re.search(p, x_lower) for p in org_patterns) or any(k in x_lower for k in org_keywords):
+        categories.add("Organisasi/Kelompok")
+
+    lembaga_keywords = [
+        "pesantren", "ponpes", "pondok", "yayasan", "kampus", "universitas",
+        "sekolah", "madrasah", "tahfiz", "tahfidz", "tahfidzul", "lp3ui",
+        "rumah qur'an", "rumah quran", "sekolah muslim", "sekolah an-nasai",
+        "uin", "lapas", "rutan",
+    ]
+    if any(k in x_lower for k in lembaga_keywords):
+        categories.add("Pondok/Yayasan")
+
+    materi_keywords = [
+        "buku", "kitab", "majalah", "cd ", "kaset", "modul",
+        "catatan", "ensiklopedia", "pdf", "ebook", "e-book",
+        "seri materi", "tulisan", "karangan", "karya", "terbitan",
+        "pupji", "tastos", "strataji", "panduan", "audio ", "mp3",
+    ]
+    if any(k in x_lower for k in materi_keywords):
+        categories.add("Materi Fisik")
+
+    kegiatan_keywords = [
+        "baiat", "bai'at", "muahadah", "dauroh", "daurah",
+        "i'tikaf", "itikaf", "pelatihan", "tadrib", "camp ", "rapat",
+        "latihan", "camping", "deklarasi", "rakernas", "rapimnas",
+        "turba", "pertemuan", "tablig akbar", "tabligh akbar",
+        "idad", "i'dad", "weapon training", "tactical training",
+        "diklat", "kunjungan", "acara",
+    ]
+    if any(k in x_lower for k in kegiatan_keywords):
+        categories.add("Kegiatan Khusus")
+
+    relasi_keywords = [
+        "keluarga", "teman", "saksi", "tokoh", "pimpinan", "amir",
+        "pengaruh", "kakak", "istri", "suami", "tante", "pak ",
+        "ustad ", "ustadz ", "ustaz ", "ust.", "kyai", "habib",
+        "motivasi dari", "arahan dari", "ajakan", "diajak",
+        "perkenalan", "bertemu", "interaksi",
+    ]
+    if any(k in x_lower for k in relasi_keywords):
+        categories.add("Relasi/Pengaruh")
+
+    if re.search(r"\bals\.?\b|\balias\b", x_lower):
+        categories.add("Relasi/Pengaruh")
+
+    return list(categories) if categories else ["Tidak Diketahui"]
+
+
+def classify_radicalization_channel(source_list):
+    if not source_list or source_list == ["Tidak Diketahui"]:
+        return "Tidak Diketahui"
+    
+    source_set = set(s.lower() for s in source_list)
+
+    digital_cats = {"media sosial/chat", "video/konten digital isis"}
+    offline_cats = {
+        "kajian/pengajian informal",
+        "pondok/yayasan",
+        "materi fisik",
+        "kegiatan khusus",
+        "organisasi/kelompok",
+        "relasi/pengaruh",
+    }
+
+    has_digital = bool(source_set & digital_cats)
+    has_offline = bool(source_set & offline_cats)
+
+    if has_digital and has_offline:
         return "Hybrid"
-    elif has_d:
+    elif has_digital:
         return "Online"
-    elif has_o:
+    elif has_offline:
         return "Offline"
-    
-    return "Lainnya"
+    else:
+        return "Tidak Diketahui"
 
 
 def classify_motivation(x):
-    if not x or str(x).strip().lower() in ["", "unknown", "tidak diketahui"]:
-        return "Data Tidak Lengkap"
-    
-    x = str(x).lower()
-    if any(k in x for k in ["syariat","syari'at","islam","agama","daulah","khilafah"]):
-        return "Tegaknya Syariat/Daulah Islam"
-    if any(k in x for k in ["hijrah","bergabung isis","bergabung daulah"]):
-        return "Hijrah ke Daulah"
-    if any(k in x for k in ["jihad","berjihad","mujahid"]):
-        return "Jihad Fisik"
-    if any(k in x for k in ["balas","dendam","sakit hati"]):
-        return "Balas Dendam"
-    if any(k in x for k in ["organisasi","kelompok","jaringan","loyalitas"]):
-        return "Loyalitas Organisasi/Kelompok"
-    if any(k in x for k in ["tidak puas","antipati","pemerintah","kebijakan"]):
-        return "Antipati terhadap Pemerintah"
-    if any(k in x for k in ["menyesal","ikut-ikut","pengaruh","terpaksa"]):
-        return "Pengaruh Eksternal"
-    
-    return "Lainnya"
+    if not x or str(x).strip().lower() in ["", "nan", "unknown", "tidak diketahui"]:
+        return ["Tidak Diketahui"]
+
+    x_lower = str(x).lower()
+    labels = set()
+
+    if any(k in x_lower for k in [
+        "syariat", "khilafah", "daulah", "negara islam", "hukum islam",
+        "hukum allah", "iqomatudin", "kaffah", "kafah", "syariah",
+        "penegakan", "menegakkan", "tegak", "tegaknya", "mendirikan",
+        "merubah", "mengubah", "mengganti", "falsafah", "ideologi",
+        "pancasila", "uud", "demokrasi", "thogut", "anshor thogut",
+        "kafir", "kufur", "murtad",
+    ]):
+        labels.add("Ideologi Syariat/Khilafah")
+
+    if any(k in x_lower for k in [
+        "jihad", "amaliyah", "amaliah", "bom", "senjata", "perang",
+        "mujahid", "syahid", "mati syahid", "berperang", "memerangi",
+        "melawan", "membunuh", "meledak", "teror", "istishadiah",
+        "i'dad", "idad", "persiapan fisik", "latihan",
+    ]):
+        labels.add("Jihad/Kekerasan")
+
+    if any(k in x_lower for k in [
+        "hijrah", "berhijrah", "berangkat ke suriah", "ke suriah",
+    ]):
+        labels.add("Hijrah")
+
+    if any(k in x_lower for k in [
+        "pemerintah", "nkri", "pancasila", "thogut", "demokrasi",
+        "anti pemerintah", "polisi", "tni", "polri", "aparat",
+        "tidak berhukum", "kafir karena", "tidak sesuai",
+    ]):
+        labels.add("Anti Pemerintah")
+
+    if any(k in x_lower for k in [
+        "baiat", "bai'at", "amir", "kelompok", "jamaah", "organisasi",
+        "isis", "ji ", "jad", "daulah", "patuh", "taat", "setia",
+        "muahadah", "bergabung", "ikut serta", "ikut andil",
+        "pemimpin", "pimpinan", "amirul mukminin",
+    ]):
+        labels.add("Loyalitas Kelompok")
+
+    if any(k in x_lower for k in [
+        "balas", "dendam", "sakit hati", "marah", "kecewa",
+        "kesal", "prihatin", "simpatik", "empati", "kemarahan",
+        "ikut-ikutan", "ikut ikutan",
+    ]):
+        labels.add("Emosi Personal")
+
+    if any(k in x_lower for k in [
+        "ridho", "pahala", "membela islam", "membela umat",
+        "agama", "tauhid", "aqidah", "akidah", "membela",
+        "kesolehan", "sholeh", "ibadah", "allah", "quran",
+        "sunah", "sunnah", "meningkatkan", "memperdalam",
+        "memahami", "mempelajari",
+    ]):
+        labels.add("Religius/Normatif")
+
+    return list(labels) if labels else ["Tidak Diketahui"]
 
 def classify_aggravating(x):
-    if not x or str(x).strip().lower() in ["", "unknown", "tidak diketahui"]:
-        return "Data Tidak Lengkap"
+    if not x or str(x).strip().lower() in ["", "nan", "unknown", "tidak diketahui"]:
+        return ["Tidak Diketahui"]
+
+    x_lower = str(x).lower()
+    labels = set()
+
+    if any(k in x_lower for k in [
+        "meresahkan", "resah", "cemas", "teror", "takut", "ketakutan",
+        "keresahan", "was-was", "tidak nyaman", "tidak aman", "ketentraman",
+        "suasana teror", "rasa takut",
+    ]):
+        labels.add("Meresahkan Masyarakat")
+
+    if any(k in x_lower for k in [
+        "tidak mendukung", "bertentangan", "menghambat", "tidak menunjang",
+        "tidak selaras", "melawan hukum",
+    ]):
+        labels.add("Tidak/Menghambat Program Pemerintah")
+
+    if any(k in x_lower for k in [
+        "korban jiwa", "meninggal", "kematian", "nyawa", "tewas",
+        "hilangnya nyawa", "korban", "sadis",
+    ]):
+        labels.add("Menimbulkan Korban Jiwa")
+
+    if any(k in x_lower for k in [
+        "nkri", "internasional", "citra", "persatuan", "stabilitas",
+        "keamanan negara", "kelangsungan", "keutuhan", "nasionalisme",
+        "perdamaian", "ancaman", "membahayakan", "mengganggu keamanan",
+        "ideologi", "pancasila",
+    ]):
+        labels.add("Mengancam Keamanan Negara")
+
+    if any(k in x_lower for k in [
+        "kerugian", "kerusakan", "hancur", "perekonomian", "ekonomi",
+        "fasilitas", "objek vital", "obyek vital", "infrastruktur",
+    ]):
+        labels.add("Kerugian Materiil/Fasilitas")
+
+    return list(labels) if labels else ["Tidak Diketahui"]
+
+def process_and_classify_list(raw_text, classify_func):
+    if not raw_text or str(raw_text).strip() in ["", "nan", "Unknown", "Tidak Diketahui"]:
+        return ["Tidak Diketahui"]
     
-    x = str(x).lower()
-    if any(k in x for k in ["keresahan","ketertiban","masyarakat"]):
-        return "Keresahan Masyarakat"
-    if any(k in x for k in ["korban massal","massa","banyak korban"]):
-        return "Potensi Korban Massal"
-    if any(k in x for k in ["dampak","meluas","luas","nasional","internasional"]):
-        return "Dampak Meluas"
-    if any(k in x for k in ["berencana","terencana","sistematis"]):
-        return "Terencana/Sistematis"
-    
-    return "Lainnya"
+    parts = str(raw_text).split("\n---\n")
+    categories = set()
 
-def process_and_classify_list(raw_list, classify_func):
-    if not raw_list:
-        return []
-    
-    if isinstance(raw_list, str):
-        raw_list = [raw_list]
+    for part in parts:
+        part = part.strip()
+        if len(part) > 3:
+            result = classify_func(part)
+            if isinstance(result, list):
+                categories.update(result)
+            else:
+                categories.add(result)
 
-    categories  = set()
-    for source in raw_list:
-        parts = str(source).split("\n---\n")
-        for part in parts:
-            part_clean = part.strip()
+    if len(categories) > 1 and "Tidak Diketahui" in categories:
+        categories.discard("Tidak Diketahui")
 
-            if len(part_clean) > 3:
-                kategori = classify_func(part_clean)
-                if kategori not in ["Data Tidak Lengkap"]:
-                    categories.add(kategori)
-
-    return sorted(list(categories))
+    return sorted(categories) if categories else ["Tidak Diketahui"]
 
 def normalize_evidence_items(data):
     what_obj = data.get("what", {})
@@ -1151,11 +1308,12 @@ def process_file(data):
     raw_rad_sources = data["why"].get("radicalization_sources", [])
     data["why"]["classified_radicalization_sources"] = process_and_classify_list(raw_rad_sources, classify_source) 
 
-    channel_result = classify_radicalization_channel(raw_rad_sources)
-    if channel_result not in ["Data Tidak Lengkap", "Lainnya"]:
+    classified_sources = data["why"]["classified_radicalization_sources"]
+    channel_result = classify_radicalization_channel(classified_sources)
+    if channel_result not in ["Data Tidak Lengkap", "Lainnya", "Tidak Diketahui"]:
         data["why"]["radicalization_channel"] = channel_result
     else:
-        data["why"]["radicalization_channel"] = ""
+        data["why"]["radicalization_channel"] = "Tidak Diketahui"
 
     raw_motivation = data["why"].get("motivation_factors", [])
     data["why"]["classified_motivation_factors"] = process_and_classify_list(raw_motivation, classify_motivation)
@@ -1165,14 +1323,6 @@ def process_file(data):
 
     if "what" not in data or not isinstance(data["what"], dict):
         data["what"] = {}
-
-    raw_perencanaan = data["what"].get("perencanaan_activities", [])
-    raw_pelatihan = data["what"].get("pelatihan_activities", [])
-    raw_tindakan = data["what"].get("tindakan_activities", [])
-
-    # data["what"]["enriched_perencanaan"] = process_temporal_list(raw_perencanaan)
-    # data["what"]["enriched_pelatihan"] = process_temporal_list(raw_pelatihan)
-    # data["what"]["enriched_tindakan"] = process_temporal_list(raw_tindakan)
 
     defense_counsels = data["who"].get("defense_counsels")
     judges = data["who"].get("judges")
