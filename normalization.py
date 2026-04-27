@@ -159,6 +159,16 @@ def clean_halaman(text):
     text = re.sub(r'\(Wilayah:.*?\)', '', str(text), flags=re.IGNORECASE)
     return re.sub(r'\s*\(Halaman\s*[\d]+\)', '', text, flags=re.IGNORECASE).strip()
 
+def halaman_remove_local_network(text):
+    if not text or str(text).strip() in ["", "Tidak Diketahui", "None"]:
+        return "Tidak Diketahui"
+        
+    text = str(text)
+    text = re.sub(r'\s*\(Halaman.*', '', text, flags=re.IGNORECASE)
+    
+    clean_text = text.strip()
+    return clean_text if clean_text else "Tidak Diketahui"
+
 def fix_typos(text):
     t = str(text)
     for pat, repl in TYPO_FIX.items():
@@ -989,6 +999,7 @@ def normalize_people_names(data):
             "religion": "Tidak Diketahui",
             "occupation": "Tidak Diketahui",
             "education_status": "Tidak Diketahui",
+            "age": "Tidak Diketahui",
             "dob": None
         }]
     else:
@@ -1047,6 +1058,13 @@ def normalize_people_names(data):
             edu = str(person.get("education_status", "")).strip()
             if edu in ["", "-", "null", "none"]:
                 person["education_status"] = "Tidak Diketahui"
+
+            age = str(person.get("age", "")).strip()
+            if not age or age in ["", "null", "none" "Tidak Diketahui"]:
+                person["normalized_age"] = None
+            else:
+                match = re.search(r'\d+', age)
+                person["normalized_age"] = int(match.group()) if match else None
 
     co_def = data.get("co_defendants", []) or who_block.get("co_defendants", [])
     
@@ -1189,9 +1207,63 @@ def extract_time_detention(data):
             item.pop("estimated_month", None)
 
     return data
+import re
 
-def clean_monetary_value(value):
-    how_much
+def _extract_numeric(val):
+    """
+    Helper function untuk mengekstrak angka murni dari string.
+    Contoh: 'Rp 50.000.000,-' -> 50000000.0
+    """
+    if not val or str(val).strip().lower() in ["", "unknown", "n/a", "-"]:
+        return None
+        
+    clean_val = re.sub(r"[^\d]", "", str(val))
+    
+    if not clean_val:
+        return None
+        
+    try:
+        return float(clean_val)
+    except ValueError:
+        return None
+
+def clean_monetary_value(data):
+    """
+    Fungsi utama untuk normalization.py
+    Mengambil, membersihkan, dan membuat field normalized baru untuk nilai uang.
+    """
+    if "how_much" not in data:
+        data["how_much"] = {}
+        
+    how_much_obj = data["how_much"]
+    
+    raw_penalties = how_much_obj.get("monetary_penalties")
+    raw_seized = how_much_obj.get("seized_money_amount")
+    
+    how_much_obj["normalized_monetary_penalties"] = _extract_numeric(raw_penalties)
+    how_much_obj["normalized_seized_money_amount"] = _extract_numeric(raw_seized)
+    
+    return data
+
+def normalized_joined_date(text):
+    if pd.isna(text) or str(text).strip().lower() in ["nan", "none", "unknown", ""]:
+        return None
+    
+    text_lower = str(text).lower()
+    year_match = re.search(r'\b(19\d{2}|20\d{2})\b', text_lower)
+
+    if not year_match:
+        return None
+    
+    year = year_match.group(1)
+    month = "01"
+    for nama_bulan, angka_bulan in BULAN_MAP.items():
+        if nama_bulan in text_lower:
+            month = angka_bulan
+
+    formatted_date = f"{year}-{month}-1"
+
+    return formatted_date
 
 # =========================
 # PROCESS PER FILE
@@ -1353,6 +1425,15 @@ def process_file(data):
     data = normalize_people_names(data)
     data = normalize_court_info(data)
     data = normalize_case_data(data)
+    data = clean_monetary_value(data)
+
+    when_obj = data.get("when", {})
+    raw_joined = when_obj.get("defendant_local_network_joined_at")
+    when_obj["normalized_joined_at"] = normalized_joined_date(raw_joined)
+
+    who_obj = data.get("who", {})
+    raw_local_network = who_obj.get("defendant_local_network", "")
+    who_obj["normalized_local_network"] = halaman_remove_local_network(raw_local_network)
     
     return data
 

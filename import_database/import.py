@@ -1418,4 +1418,203 @@ def import_case_charge_articles(json_file_path):
             cursor.close()
             conn.close()
 
+def import_monetary_amounts(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    what_obj = data.get("what", {})
+    case_number = what_obj.get("case_number", None)
+
+    monetary_fields = {
+        "monetary_penalties": "normalized_monetary_penalties",
+        "seized_money_amount": "normalized_seized_money_amount"
+    }
+
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        id_cases = get_case_id(cursor, case_number)
+        if not id_cases:
+            print(f"Kasus {case_number} tidak ditemukan.")
+            return
+
+        baru = 0
+        lama = 0
+
+        for field_key, amount_type in monetary_fields.items():
+            raw_value = what_obj.get(field_key)
+            amount = raw_value
+
+            if amount is None:
+                continue
+
+            # 1. Cek apakah sudah ada nominal dengan tipe yang sama untuk kasus ini
+            check_query = """
+                SELECT id FROM public.case_monetary_amounts 
+                WHERE case_id = %s AND amount_type = %s
+            """
+            cursor.execute(check_query, (id_cases, amount_type))
+            result = cursor.fetchone()
+
+            if result:
+                lama += 1
+            else:
+                # 2. Insert data baru
+                insert_query = """
+                    INSERT INTO public.case_monetary_amounts 
+                    (case_id, amount_type, amount, currency, notes, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+                
+                notes = f"Hasil ekstraksi dari field {field_key}"
+                cursor.execute(insert_query, (id_cases, amount_type, amount, "IDR", notes))
+                baru += 1
+                print(f"Nominal BARU ({amount_type}): {amount} ditambahkan ke kasus {case_number}")
+
+        conn.commit()
+        print(f"✅ Selesai: {baru} Data Baru, {lama} Sudah Ada.")
+
+    except Exception as e:
+        print(f"❌ Error Database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+def get_person_id(cursor, person_name):
+    """Mencari ID orang dari tabel master berdasarkan nama."""
+    if not person_name:
+        return None
+    cursor.execute("SELECT id FROM public.persons WHERE fullname = %s LIMIT 1", (person_name.strip(),))
+    result = cursor.fetchone()
+    return result[0] if result else None
+
+def import_case_people(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    who_obj = data.get("who", {})
+    case_number = data.get("what", {}).get("case_number", None)
+    
+    defendant = who_obj.get("defendant_name", "")
+    co_defendants = who_obj.get("normalized_co_defendants", [])
+    judges = who_obj.get("normalized_judges", [])
+    prosecutors = who_obj.get("normalized_prosecutors", [])
+    defense_counsels = who_obj.get("normalized_defense_counsels", [])
+    clerks = who_obj.get("normalized_clerk", [])
+    witnesses = who_obj.get("witnesses", [])
+    
+    people_to_process = []
+    
+    # Terdakwa Utama
+    if defendant and defendant != "Tidak Diketahui":
+        people_to_process.append({"name": defendant, "role": "defendant", "is_presiding": False, "seq": 1})
+        
+    # Co-Defendants
+    for i, name in enumerate(co_defendants, start=2):
+        if name != "Tidak Diketahui":
+            people_to_process.append({"name": name, "role": "co_defendant", "is_presiding": False, "seq": i})
+
+    # Hakim (is_presiding = True untuk urutan 1)
+    for i, name in enumerate(judges, start=1):
+        if name != "Tidak Diketahui":
+            people_to_process.append({"name": name, "role": "judge", "is_presiding": (i == 1), "seq": i})
+
+    # Jaksa
+    for i, name in enumerate(prosecutors, start=1):
+        if name != "Tidak Diketahui": # Penting agar "Tidak Diketahui" tidak masuk ke database master person
+            people_to_process.append({"name": name, "role": "prosecutor", "is_presiding": False, "seq": i})
+
+    # Pengacara / Penasihat Hukum
+    for i, name in enumerate(defense_counsels, start=1):
+        if name != "Tidak Diketahui":
+            people_to_process.append({"name": name, "role": "defense_counsel", "is_presiding": False, "seq": i})
+
+    # Panitera
+    for i, name in enumerate(clerks, start=1):
+        if name != "Tidak Diketahui":
+            people_to_process.append({"name": name, "role": "clerk", "is_presiding": False, "seq": i})
+
+    # Saksi
+    for i, name in enumerate(witnesses, start=1):
+        if name != "Tidak Diketahui":
+            people_to_process.append({"name": name, "role": "witness", "is_presiding": False, "seq": i})
+
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        id_cases = get_case_id(cursor, case_number)
+        if not id_cases:
+            print(f"Kasus {case_number} tidak ditemukan.")
+            return
+
+        relasi_baru = 0
+        relasi_lama = 0
+
+        # 3. Looping untuk insert ke database
+        for item in people_to_process:
+            clean_name = item["name"].strip()
+            if not clean_name:
+                continue
+
+            person_id = get_person_id(cursor, clean_name)
+            if not person_id:
+                print(f"Orang bernama '{clean_name}' belum ada di tabel master person. Melewati...")
+                continue
+
+            # Cek duplikasi relasi (kasus yang sama, orang yang sama, peran yang sama)
+            check_query = """
+                SELECT id FROM public.case_people 
+                WHERE case_id = %s AND person_id = %s AND role = %s
+            """
+            cursor.execute(check_query, (id_cases, person_id, item["role"]))
+            if cursor.fetchone():
+                relasi_lama += 1
+            else:
+                insert_query = """
+                    INSERT INTO public.case_people 
+                    (case_id, person_id, role, is_presiding_judge, sequence_no, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+                cursor.execute(insert_query, (
+                    id_cases, 
+                    person_id, 
+                    item["role"], 
+                    item["is_presiding"], 
+                    item["seq"]
+                ))
+                relasi_baru += 1
+                print(f"Relasi BARU: {clean_name} ({item['role']}) ditambahkan ke kasus.")
+
+        conn.commit()
+        print(f"✅ Selesai: {relasi_baru} Relasi Baru, {relasi_lama} Sudah Ada.")
+
+    except Exception as e:
+        print(f"❌ Error Database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+def import_case_defendant_details(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    who_obj = data.get("who", {})
+    when_obj = data.get("when", {})
+    case_number = data.get("what", {}).get("case_number", None)
+
+    ideology = who_obj.get("defendant_ideology_affiliation", None)
+    local_network = who_obj.get("", None)
+    joined_at_raw = when_obj.get("defendant_local_network_joined_at", None)
+
 import_case_charge_articles("19_PID~SUS_2022_PN JKT~TIM.json")
