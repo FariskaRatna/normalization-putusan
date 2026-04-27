@@ -125,7 +125,7 @@ def import_provinces(json_path):
         if conn:
             conn.close()
 
-def insert_article_charges(json_file_path):
+def import_article_charges(json_file_path):
     try:
         with open(json_file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -169,7 +169,7 @@ def insert_article_charges(json_file_path):
             conn.close()
 
 
-def insert_item_catalog(json_file_path):
+def import_item_catalog(json_file_path):
     try:
         with open(json_file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -224,7 +224,7 @@ def insert_item_catalog(json_file_path):
             conn.close()
 
 
-def insert_persons(json_file_path):
+def import_persons(json_file_path):
     try:
         with open(json_file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -300,7 +300,7 @@ def insert_persons(json_file_path):
             cursor.close()
             conn.close()
 
-def insert_co_defendants(json_path_file):
+def import_co_defendants(json_path_file):
     try:
         with open(json_path_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -445,7 +445,7 @@ def import_officials_to_persons(json_path_file):
             cursor.close()
             conn.close()
 
-def insert_person_documents(json_file_path):
+def import_person_documents(json_file_path):
     try:
         with open(json_file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -850,6 +850,7 @@ def import_cases(json_file_path):
     has_attack_plan = what_block.get("has_attack_plan")
     attack_plan_summary = what_block.get("attack_plan_summary")
     arrest_date = when_block.get("arrest_date")
+    communication = what_block.get('defendant_chat_platform')
 
     if not case_number or "Tidak Diketahui" in case_number or "Data Kosong" in case_number:
         print(f"SKIP: Data Kasus tidak ada")
@@ -874,8 +875,8 @@ def import_cases(json_file_path):
         insert_query = """
             INSERT INTO cases(case_number, court_id, id_channel, process_level, indictment_model, verdict_outcome,
             prison_term_years, prison_term_months, detention_credit, court_date, arrest_date, appeal_timeline,
-            has_attack_plan, attack_plan_summary, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            has_attack_plan, attack_plan_summary, communication, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
             ON CONFLICT (case_number)
             DO UPDATE SET
                 court_id = EXCLUDED.court_id, 
@@ -891,13 +892,14 @@ def import_cases(json_file_path):
                 appeal_timeline = EXCLUDED.appeal_timeline,
                 has_attack_plan = EXCLUDED.has_attack_plan, 
                 attack_plan_summary = EXCLUDED.attack_plan_summary,
+                communication = EXCLUDE.communication
                 updated_at = NOW()
             RETURNING id;
         """
 
         cursor.execute(insert_query, (case_number, court_id, channel_id, process_level, indictment_model, verdict_outcome,
             prison_term_years, prison_term_months, detention_credit, court_date, arrest_date, appeal_timeline,
-            has_attack_plan, attack_plan_summary))
+            has_attack_plan, attack_plan_summary, communication))
         case_id = cursor.fetchone()['id']
         conn.commit()
 
@@ -1244,11 +1246,11 @@ def import_mitigating_factors(json_path):
             else: 
                 insert_query = """
                     INSERT INTO public.mitigating_factors (id_cases, description, created_at, updated_at)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     RETURNING id;
                 """
 
-                cursor.execute(insert_query, (clean_description,))
+                cursor.execute(insert_query, (id_cases, clean_description,))
 
                 mitigating_id = cursor.fetchone()[0]
                 mitigating_baru += 1
@@ -1266,4 +1268,154 @@ def import_mitigating_factors(json_path):
             cursor.close()
             conn.close()
 
-import_motivation_factors("19_PID~SUS_2022_PN JKT~TIM.json")
+def import_detention_timeline(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    detention_timeline = data.get("when", {}).get("detention_timeline", [])
+    case_number = data.get("what", {}).get("case_number", None)
+
+    if not detention_timeline:
+        print("Tidak ada detention timeline di file")
+        return
+    
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        detention_baru = 0
+        detention_lama = 0
+
+        id_cases = get_case_id(cursor, case_number)
+        
+        for item in detention_timeline:
+            if not isinstance(item, dict):
+                continue
+                
+            description = item.get("description", "").strip()
+            date_str = item.get("date", "").strip()
+            start_date = item.get("start_date")
+            end_date = item.get("end_date")
+
+            if not description and not date_str:
+                continue
+
+            check_query = """
+                SELECT id FROM public.detention_timeline 
+                WHERE id_cases = %s AND description = %s AND detention_date = %s
+            """
+            cursor.execute(check_query, (id_cases, description, date_str))
+            result = cursor.fetchone()
+
+            if result:
+                detention_id = result[0]
+                detention_lama += 1
+            else: 
+                insert_query = """
+                    INSERT INTO public.detention_timeline 
+                    (id_cases, description, detention_date, start_date, end_date, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+                
+                cursor.execute(insert_query, (id_cases, description, date_str, start_date, end_date))
+
+                detention_id = cursor.fetchone()[0]
+                detention_baru += 1
+                print(f"Detention timeline BARU ditambahkan: {description} ({date_str}) (ID: {detention_id})")
+                
+        conn.commit()
+        print(f"Selesai: {detention_baru} Baru, {detention_lama} Sudah Ada")
+
+    except Exception as e:
+        print(f"Error database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+def get_legal_id(cursor, article_text):
+    if not article_text or article_text == "Tidak Diketahui":
+        return None
+    
+    query = "SELECT id FROM legal_articles WHERE article_text = %s LIMIT 1"
+    cursor.execute(query, (article_text,))
+    result = cursor.fetchone()
+
+    return result[0] if result else None
+
+def import_case_charge_articles(json_file_path):
+    with open(json_file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    case_number = data.get("what", {}).get("case_number", None)
+    articles = data.get("what", {}).get("normalized_articles", [])
+    
+    if isinstance(articles, str):
+        articles = [articles]
+
+    if not articles:
+        print("Tidak ada data normalized_articles di file ini.")
+        return
+    
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        article_baru = 0
+        article_lama = 0
+
+        # Dapatkan ID kasus
+        id_cases = get_case_id(cursor, case_number)
+        if not id_cases:
+            print(f"Kasus {case_number} tidak ditemukan di tabel cases.")
+            return
+
+        for article_text in articles:
+            clean_article = article_text.strip()
+            if not clean_article:
+                continue
+                
+            id_article = get_legal_id(cursor, clean_article)
+            
+            if not id_article:
+                print(f"Pasal '{clean_article}' tidak ditemukan di database master. Melewati...")
+                continue
+
+            cursor.execute(
+                "SELECT id FROM public.case_charged_articles WHERE case_id = %s AND article_id = %s",
+                (id_cases, id_article)
+            )
+            result = cursor.fetchone()
+
+            if result:
+                article_lama += 1
+            else:
+                insert_query = """
+                    INSERT INTO public.case_charged_articles (case_id, article_id, created_at, updated_at)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+                cursor.execute(insert_query, (id_cases, id_article))
+                new_id = cursor.fetchone()[0]
+                print(f"Relasi BARU ditambahkan: {clean_article} (ID Relasi: {new_id})")
+                
+                article_baru += 1
+
+        conn.commit()
+        print(f"Selesai: {article_baru} Relasi Baru, {article_lama} Relasi Sudah Ada")
+
+    except Exception as e:
+        print(f"Error database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+import_case_charge_articles("19_PID~SUS_2022_PN JKT~TIM.json")

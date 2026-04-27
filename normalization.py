@@ -683,121 +683,80 @@ def normalize_ideology(x):
 
     return " | ".join(sorted(result)) if result else "Tidak Diketahui"
 
+def split_field(text, sep="\n---\n"):
+    """Fungsi pembantu untuk memecah string yang digabung dengan separator khusus."""
+    if not text or str(text).strip().lower() in ["", "unknown", "none", "null"]:
+        return []
+    return [x.strip() for x in str(text).split(sep) if x.strip()]
+
 def classify_source(x):
-    if not x or str(x).strip().lower() in ["", "nan", "unknown", "tidak diketahui"]:
-        return "Tidak Diketahui"
+    """Mengklasifikasikan satu teks sumber radikalisasi ke dalam kategori."""
+    if not x or str(x).strip().lower() in ["", "unknown", "none", "null"]:
+        return "Data Tidak Lengkap"
+        
+    x = str(x).lower()
     
-    x_lower = str(x).lower()
+    # Video/Digital ISIS
+    if any(k in x for k in ["video","isis","daulah","peperangan","eksekusi","rilisan","youtube",
+                              "nasyid","film","propaganda","konten","streaming"]):
+        return "Video/Konten Digital ISIS"
+    # Media Sosial/Chat
+    if any(k in x for k in ["facebook","whatsapp","telegram","group","grup","channel",
+                              "media sosial","medsos","akun","instagram","website","internet",
+                              "online","twitter","wa ","fb ","chat","broadcast","aplikasi",
+                              "e-mail","email","tiktok"]):
+        return "Media Sosial/Chat"
+    # Kajian/Pengajian Informal
+    if any(k in x for k in ["kajian","pengajian","ustadz","ceramah","majelis","halaqah",
+                              "tarbiyah","taklim","tabligh","dakwah","tauhid","jihad","hijrah",
+                              "khutbah","khotbah","ta'lim","talim","syirik","aqidah","fiqih",
+                              "muamalah","iman","subuh","magrib","isya","pengurus","pengajar",
+                              "pembicara","penceramah","training","pelatihan agama"]):
+        return "Kajian/Pengajian Informal"
+    # Pondok/Yayasan
+    if any(k in x for k in ["pesantren","ponpes","yayasan","pondok","madrasah","ma'had"]):
+        return "Pondok/Yayasan"
+    # Materi Fisik
+    if any(k in x for k in ["buku","materi","cd","audio","majalah","artikel","modul",
+                              "kitab","leaflet","pamflet","selebaran","dokumen","file","pdf"]):
+        return "Materi Fisik"
+    # Pengaruh/Jaringan
+    if any(k in x for k in ["pengaruh","komunikasi","keluarga","baiat","amir","jamaah",
+                              "kelompok","mit","ji","jad","teman","sahabat","saudara",
+                              "rekrut","merekrut","diajak","dipengaruhi","kontak","bertemu",
+                              "perkenalan","jaringan","anggota","senior","junior","mentor"]):
+        return "Pengaruh/Jaringan"
+        
+    return "Lainnya"
+
+def normalize_radicalization_sources(raw_source):
+    """
+    Fungsi utama untuk normalization.py. 
+    Menerima data mentah (string atau list), memecahnya, dan mengembalikan list unik kategori.
+    """
+    if not raw_source:
+        return []
+        
+    # 1. Pastikan bentuknya List (Menerapkan logika df_d1_base["why_radicalization_sources"].str.split)
+    if isinstance(raw_source, str):
+        sources = split_field(raw_source, sep="\n---\n")
+        if not sources: # Jika tidak pakai separator itu, anggap 1 kalimat utuh
+            sources = [raw_source]
+    elif isinstance(raw_source, list):
+        sources = raw_source
+    else:
+        return []
+
     categories = set()
-    kajian_keywords = [
-        "kajian", "pengajian", "tausiah", "tausyiah", "tauziah", "ceramah",
-        "taklim", "ta'lim", "halaqoh", "halaqah", "holaqoh", "tabligh",
-        "tablig", "dakwah", "majelis", "ngaji", "materi", "mushola", "musholla",
-        "ustadz", "ustad", "ustaz", "ust.", "khotbah", "khutbah",
-        "tarbiyah", "dauroh", "daurah", "tadzkiyatun", "tazqyah",
-        "takwiyah", "siroh", "sirah", "fiah", "fiqih", "aqidah", "akidah",
-        "tafsir", "tauhid", "masjid", "mesjid", "rumah tahfiz", "kultum",
-        "muahadah", "baiat", "bai'at", "sosialisasi", "pembekalan",
-        "pembinaan", "kaderisasi", "rekrut", "pimpinan", "amir",
-        "tabliq", "bedah buku", "forum dialog", "turba",
-        "pertemuan rutin", "kajian rutin", "pengajian rutin",
-        "kajian khusus", "kajian umum", "kajian online", "majelis taklim",
-        "majelis rosul", "majlis", "pangajian", "pengisi kajian",
-        "tesa", "tam ", "tam1", "tam2", "t1 ", "t3 ", "pupji", "tastos",
-        "strataji", "manhaj", "i'dad", "idad", "tadrib", "diklat",
-        "tahapan", "tamhiz",
-    ]
+    for source in sources:
+        source_str = str(source).strip()
+        
+        if len(source_str) > 3: 
+            kategori = classify_source(source_str)
+            if kategori not in ["Data Tidak Lengkap", "Lainnya"]:
+                categories.add(kategori)
 
-    if any(k in x_lower for k in kajian_keywords):
-        categories.add("Kajian/Pengajian Informal")
-
-    digital_keywords = [
-        "facebook", "whatsapp", "telegram", "instagram", "youtube",
-        "website", "situs", "web", "blog", "internet", "online",
-        "channel", "chanel", "akun", "group", "grup", "posting", "postingan",
-        "link", "berita", "artikel", "browsing", "bot", "media sosial",
-        "medsos", "bbm", "twitter", "tiktok", "forum", "aplikasi",
-        "media online", "media elektronik", "media internet",
-        "media social", "siaran", "televisi", "tv",
-        "sms", "teleconference", "hp ", "handphone", "amn",
-        "e-book", "ebook", "mp3", "download", "upload",
-        "vice news", "arrahmah", "millahibrahim", "milah ibrahim",
-        "milla ibrahim", "al mustaqbal", "voa islam", "shotussalam",
-        "shoutus salam", "qiblat", "lasdipo", "eramuslim", "panjimas",
-        "manjanik", "ghuroba", "panji mas", "ukk", "djabeluhud",
-        "ar rahmah", "ar-rahmah",
-    ]
-
-    if any(k in x_lower for k in digital_keywords):
-        categories.add("Media Sosial/Chat")
-
-    video_keywords = [
-        "video", "isis", "daulah", "suriah", "eksekusi", "perang",
-        "jihad", "nasyid", "mujahidin", "pembantaian", "peperangan",
-        "pemenggalan", "bom bunuh", "istisyadiah", "fa'i", "ghonimah",
-        "kemenangan", "pertempuran", "revolusi",
-    ]
-    if any(k in x_lower for k in video_keywords):
-        categories.add("Video/Konten Digital ISIS")
-
-    org_patterns = [
-        r"\b(ji|jad|nii|mmi|fpi|mit|jak|jat|garis|kompak|adira|fordi|fordai|almanar|persis|hti)\b",
-        r"jamaah islamiy", r"jamaah anshor", r"anshor daulah", r"anshor khilafah",
-        r"mujahidin indonesia", r"majelis mujahidin", r"syam organizer",
-        r"front pembela", r"hizbut tahrir", r"hizbu tahir",
-        r"aliansi masyarakat", r"nahi munkar", r"azzam dakwah",
-        r"jamaah imamah", r"jamaah ashorut",
-    ]
-    org_keywords = [
-        "organisasi", "kelompok", "jaringan", "ormas", "laskar",
-        "fkaai", "lpi", "forum komunik", "forum dialog",
-    ]
-    if any(re.search(p, x_lower) for p in org_patterns) or any(k in x_lower for k in org_keywords):
-        categories.add("Organisasi/Kelompok")
-
-    lembaga_keywords = [
-        "pesantren", "ponpes", "pondok", "yayasan", "kampus", "universitas",
-        "sekolah", "madrasah", "tahfiz", "tahfidz", "tahfidzul", "lp3ui",
-        "rumah qur'an", "rumah quran", "sekolah muslim", "sekolah an-nasai",
-        "uin", "lapas", "rutan",
-    ]
-    if any(k in x_lower for k in lembaga_keywords):
-        categories.add("Pondok/Yayasan")
-
-    materi_keywords = [
-        "buku", "kitab", "majalah", "cd ", "kaset", "modul",
-        "catatan", "ensiklopedia", "pdf", "ebook", "e-book",
-        "seri materi", "tulisan", "karangan", "karya", "terbitan",
-        "pupji", "tastos", "strataji", "panduan", "audio ", "mp3",
-    ]
-    if any(k in x_lower for k in materi_keywords):
-        categories.add("Materi Fisik")
-
-    kegiatan_keywords = [
-        "baiat", "bai'at", "muahadah", "dauroh", "daurah",
-        "i'tikaf", "itikaf", "pelatihan", "tadrib", "camp ", "rapat",
-        "latihan", "camping", "deklarasi", "rakernas", "rapimnas",
-        "turba", "pertemuan", "tablig akbar", "tabligh akbar",
-        "idad", "i'dad", "weapon training", "tactical training",
-        "diklat", "kunjungan", "acara",
-    ]
-    if any(k in x_lower for k in kegiatan_keywords):
-        categories.add("Kegiatan Khusus")
-
-    relasi_keywords = [
-        "keluarga", "teman", "saksi", "tokoh", "pimpinan", "amir",
-        "pengaruh", "kakak", "istri", "suami", "tante", "pak ",
-        "ustad ", "ustadz ", "ustaz ", "ust.", "kyai", "habib",
-        "motivasi dari", "arahan dari", "ajakan", "diajak",
-        "perkenalan", "bertemu", "interaksi",
-    ]
-    if any(k in x_lower for k in relasi_keywords):
-        categories.add("Relasi/Pengaruh")
-
-    if re.search(r"\bals\.?\b|\balias\b", x_lower):
-        categories.add("Relasi/Pengaruh")
-
-    return list(categories) if categories else ["Tidak Diketahui"]
+    return list(categories) if categories else ["Lainnya"]
 
 
 def classify_radicalization_channel(source_list):
@@ -1179,6 +1138,61 @@ def extract_court_code(case_number, fallback_location="", clean_court_name=""):
         
     return _generate_fallback(fallback_location, clean_court_name)
 
+BULAN_ID_EN = {
+    "januari": "January", "februari": "February", "maret": "March",
+    "april": "April", "mei": "May", "juni": "June",
+    "juli": "July", "agustus": "August", "september": "September",
+    "oktober": "October", "november": "November", "desember": "December"
+}
+
+def split_and_parse_timeline(date_string):
+    if not date_string:
+        return None, None
+        
+    parts = re.split(r'(?i)\s+sampai\s+dengan\s+|\s+s/d\s+|\s+hingga\s+', date_string)
+    
+    parsed_dates = []
+    for part in parts:
+        clean_part = re.sub(r'(?i)tanggal\s+', '', part).strip()
+        
+        for id_month, en_month in BULAN_ID_EN.items():
+            if id_month in clean_part.lower():
+                clean_part = re.sub(f'(?i){id_month}', en_month, clean_part)
+                break
+                
+        parsed_dates.append(safe_parse_date(clean_part))
+
+    start_dt = parsed_dates[0] if len(parsed_dates) > 0 else pd.NaT
+    end_dt = parsed_dates[1] if len(parsed_dates) > 1 else pd.NaT
+    
+    start_date = start_dt.strftime('%Y-%m-%d') if pd.notna(start_dt) else None
+    end_date = end_dt.strftime('%Y-%m-%d') if pd.notna(end_dt) else None
+    
+    return start_date, end_date
+
+def extract_time_detention(data):
+    when_obj = data.get("when", {})
+    detention = when_obj.get("detention_timeline", [])
+    
+    if not detention or not isinstance(detention, list):
+        if "when" not in data:
+            data["when"] = {}
+
+    for item in detention:
+        if isinstance(item, dict) and 'date' in item:
+            start, end = split_and_parse_timeline(item['date'])
+            
+            item["start_date"] = start
+            item["end_date"] = end
+            
+            item.pop("estimated_year", None)
+            item.pop("estimated_month", None)
+
+    return data
+
+def clean_monetary_value(value):
+    how_much
+
 # =========================
 # PROCESS PER FILE
 # =========================
@@ -1306,7 +1320,7 @@ def process_file(data):
         data["why"] = {}
 
     raw_rad_sources = data["why"].get("radicalization_sources", [])
-    data["why"]["classified_radicalization_sources"] = process_and_classify_list(raw_rad_sources, classify_source) 
+    data["why"]["classified_radicalization_sources"] = process_and_classify_list(raw_rad_sources, normalize_radicalization_sources) 
 
     classified_sources = data["why"]["classified_radicalization_sources"]
     channel_result = classify_radicalization_channel(classified_sources)
@@ -1370,6 +1384,8 @@ def main():
                     
                     # 2. Jalankan proses penambahan bulan & tahun aktivitas
                     data = enrich_activities(data)
+
+                    data = extract_time_detention(data)
 
                     with open(output_path, "w", encoding="utf-8") as f:
                         json.dump(data, f, ensure_ascii=False, indent=2)
