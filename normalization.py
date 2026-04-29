@@ -924,22 +924,20 @@ def process_and_classify_list(raw_text, classify_func):
 
     return sorted(categories) if categories else ["Tidak Diketahui"]
 
+import re
+
 def normalize_evidence_items(data):
     what_obj = data.get("what", {})
     
     if not isinstance(what_obj, dict):
         return data
         
-    items = what_obj.get("evidence_items", [])
-    
-    if not isinstance(items, list) or not items:
-        return data
-    
-    for item in items:
-        raw_desc = str(item.get("description", "")).lower().strip()
-
+    # ==========================================
+    # 🌟 FUNGSI HELPER: KATEGORISASI (Agar bisa dipakai berulang)
+    # ==========================================
+    def categorize_item(raw_desc):
         category = "other"
-        clean_name = raw_desc
+        clean_name = raw_desc.title() # Default pakai nama asli jika tidak masuk kategori
 
         if any(k in raw_desc for k in ["pcp", "moser", "predator", "shotgun", "senapan angin"]):
             category = "weapon"
@@ -950,38 +948,67 @@ def normalize_evidence_items(data):
         elif any(k in raw_desc for k in ["parang", "golok", "samurai", "pisau", "celurit", "sangkur"]):
             category = "weapon"
             clean_name = "Senjata Tajam"
-
         elif any(k in raw_desc for k in ["bom", "handak", "detonator", "belerang", "mesiu", "black powder"]):
             category = "explosive"
             clean_name = "Bahan Peledak / Komponen Bom"
-
         elif any(k in raw_desc for k in ["hp", "handphone", "ponsel", "nokia", "samsung", "xiaomi", "sim card"]):
             category = "phone"
             clean_name = "Telepon Seluler / SIM Card"
         elif any(k in raw_desc for k in ["laptop", "flashdisk", "harddisk", "memory card", "cpu"]):
-            category = "other" # Atau buat kategori 'electronic' jika ada di SQL
+            category = "electronic" # Lebih spesifik dari 'other'
             clean_name = "Perangkat Digital / Penyimpanan"
-
-        elif any(k in raw_desc for k in ["buku", "kitab", "dokumen", "selebaran", "buletin", "paspor", "ktp"]):
+        elif any(k in raw_desc for k in ["buku", "kitab", "dokumen", "selebaran", "buletin", "paspor", "ktp", "sim "]):
             category = "document"
             clean_name = "Buku / Dokumen Fisik"
-
         elif any(k in raw_desc for k in ["uang", "rupiah", "cash", "atm", "rekening", "dolar"]):
             category = "cash"
             clean_name = "Uang Tunai / Instrumen Keuangan"
-
         elif any(k in raw_desc for k in ["motor", "mobil", "stnk", "bpkb"]):
             category = "vehicle"
             clean_name = "Kendaraan Bermotor"
 
-        item["normalized_name"] = clean_name.title()
-        item["item_category"] = category
+        return clean_name, category
 
-        try:
-            item["quantity"] = int(item.get("quantity", 1))
-        except:
-            item["quantity"] = 1
+    # ==========================================
+    # 1. NORMALISASI evidence_items
+    # ==========================================
+    evidence_items = what_obj.get("evidence_items", [])
+    if isinstance(evidence_items, list):
+        for item in evidence_items:
+            raw_desc = str(item.get("description", "")).lower().strip()
+            clean_name, category = categorize_item(raw_desc)
 
+            item["normalized_name"] = clean_name
+            item["item_category"] = category
+            
+            # Amankan Quantity
+            try:
+                item["quantity"] = int(item.get("quantity", 1))
+            except:
+                item["quantity"] = 1
+
+    # ==========================================
+    # 2. NORMALISASI evidence_disposition
+    # ==========================================
+    evidence_dispositions = what_obj.get("evidence_disposition", [])
+    if isinstance(evidence_dispositions, list):
+        for item in evidence_dispositions:
+            raw_desc = str(item.get("item_description", "")).lower().strip()
+            clean_name, category = categorize_item(raw_desc)
+
+            item["normalized_name"] = clean_name
+            item["item_category"] = category
+            
+            raw_disp = str(item.get("disposition", "")).strip()
+            item["disposition"] = raw_disp if raw_disp and raw_disp != "None" else "Tidak Diketahui"
+
+            quantity = 1
+            match = re.search(r'^(\d+)\s', raw_desc)
+            if match:
+                quantity = int(match.group(1))
+            item["quantity"] = quantity
+
+    data["what"] = what_obj
     return data
 
 def normalize_people_names(data):
