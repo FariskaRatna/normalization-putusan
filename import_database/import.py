@@ -168,8 +168,7 @@ def import_article_charges(json_file_path):
             cursor.close()
             conn.close()
 
-
-def import_item_catalog(json_file_path):
+def import_case_evidence(json_file_path):
     try:
         with open(json_file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -177,9 +176,23 @@ def import_item_catalog(json_file_path):
         print(f"Gagal membaca file: {e}")
         return
 
-    evidence_items = data.get("what", {}).get("evidence_items", [])
+    what_block = data.get("what", {})
+    
+    case_number = str(what_block.get("case_number", "")).strip()
+    
+    # Terapkan logika sensor 'xxx' yang sama agar cocok dengan database
+    if "xxx" in case_number.lower():
+        nama_file = os.path.basename(json_file_path)
+        case_number = f"{case_number} [Sensor: {nama_file}]"
+
+    if not case_number or case_number in ["Tidak Diketahui", "Data Kosong"]:
+        print(f"⏩ SKIP: Nomor kasus tidak ada di {json_file_path}")
+        return
+
+    evidence_items = what_block.get("evidence_items", [])
+
     if not evidence_items:
-        print("Tidak ada barang bukti untuk diimport di file ini.")
+        print(f"⏩ SKIP: Tidak ada barang bukti di file {json_file_path}.")
         return
 
     conn = None
@@ -187,42 +200,43 @@ def import_item_catalog(json_file_path):
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor()
 
+        cursor.execute("SELECT id FROM public.cases WHERE case_number = %s", (case_number,))
+        result = cursor.fetchone()
+        
+        if not result:
+            print(f"⚠️ SKIP: Kasus '{case_number}' belum ada di database. Harap import kasusnya dulu.")
+            return
+            
+        case_id = result[0]
+        inserted_count = 0
+
         for item in evidence_items:
-            item_name = item.get("normalized_name")
-            item_category = item.get("item_category", "other")
-            default_unit = item.get("unit", "pcs")
+            item_name = item.get("description")
+            quantity = item.get("quantity", 1)
+            unit = item.get("unit", "pcs")
+            disposition = item.get("disposition", "Tidak Diketahui")
 
             if not item_name or item_name == "Tidak Diketahui": 
                 continue
 
-            check_query = "SELECT id FROM public.item_catalog WHERE item_name = %s"
-            cursor.execute(check_query, (item_name,))
-            result = cursor.fetchone()
-
-            if result:
-                catalog_id = result[0]
-                print(f"SKIP: '{item_name}' sudah ada di katalog (ID: {catalog_id}).")
-            else:
-                insert_query = """
-                    INSERT INTO public.item_catalog 
-                    (item_category, item_name, default_unit, created_at, updated_at)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    RETURNING id;
-                """
-                cursor.execute(insert_query, (item_category, item_name, default_unit))
-                catalog_id = cursor.fetchone()[0]
-                print(f"BARU: '{item_name}' ditambahkan ke katalog (ID: {catalog_id}).")
+            insert_query = """
+                INSERT INTO public.case_evidence_items 
+                (case_id, description, quantity, unit, disposition, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            """
+            cursor.execute(insert_query, (case_id, item_name, quantity, unit, disposition))
+            inserted_count += 1
         
         conn.commit()
+        print(f"✅ SUKSES: {inserted_count} barang bukti ditambahkan untuk kasus ID: {case_id}")
 
     except Exception as e:
-        print(f"Error Database: {e}")
+        print(f"❌ Error Database: {e}")
         if conn: conn.rollback()
     finally:
         if conn:
             cursor.close()
             conn.close()
-
 
 def import_persons(json_file_path):
     try:
@@ -742,61 +756,6 @@ def import_court(json_file_path):
             cursor.close()
             conn.close()
 
-def import_channel_radicalization(json_path):
-    with open(json_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-
-    channel = data.get("why", {}).get("radicalization_channel", [])
-    if isinstance(channel, str):
-        channel = [channel]
-
-    if not channel:
-        print("Tidak ada channel radicalization di file ini")
-        return
-    
-    conn = None
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cursor = conn.cursor()
-        
-        channel_baru = 0
-        channel_lama = 0
-
-        for channel_name in channel:
-            clean_channel_name = channel_name.strip()
-            if not clean_channel_name:
-                continue
-
-            cursor.execute("SELECT id FROM public.radicalization_channel WHERE channel_name = %s", (clean_channel_name,))
-            result = cursor.fetchone()
-
-            if result:
-                channel_id = result[0]
-                channel_lama += 1
-            else:
-                insert_query = """
-                    INSERT INTO public.radicalization_channel (channel_name, created_at, updated_at)
-                    VALUES (%s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    RETURNING id;
-                """
-
-                cursor.execute(insert_query, (clean_channel_name,))
-
-                channel_id = cursor.fetchone()[0]
-                channel_baru += 1
-                print(f"Classified Motivation BARU ditambahkan: {clean_channel_name} (ID: {channel_id})")
-
-        conn.commit()
-        print(f"Selesai, {channel_baru} Baru, {channel_lama} Sudah Ada")
-
-    except Exception as e:
-        print(f"Error database: {e}")
-        if conn:
-            conn.rollback()
-    finally:
-        if conn:
-            cursor.close()
-            conn.close()
 
 def get_court_id(cursor, court_name):
     if not court_name or court_name == "Tidak Diketahui":
@@ -804,16 +763,6 @@ def get_court_id(cursor, court_name):
     
     query = "SELECT id FROM courts WHERE court_name = %s LIMIT 1"
     cursor.execute(query, (court_name,))
-    result = cursor.fetchone()
-
-    return result['id'] if result else None
-
-def get_channel_id(cursor, channel_name):
-    if not channel_name or channel_name == "Tidak Diketahui":
-        return None
-    
-    query = "SELECT id FROM radicalization_channel WHERE channel_name = %s LIMIT 1"
-    cursor.execute(query, (channel_name,))
     result = cursor.fetchone()
 
     return result['id'] if result else None
@@ -838,7 +787,6 @@ def import_cases(json_file_path):
         return
     
     court_name = what_block.get("court_name")
-    channel_name = why_block.get("radicalization_channel")
     process_level = what_block.get("court_level")
     indictment_model = what_block.get("indictment_model")
     verdict_outcome = what_block.get("verdict_per_charge")
@@ -852,6 +800,7 @@ def import_cases(json_file_path):
     arrest_date = when_block.get("arrest_date")
     communication = what_block.get('defendant_chat_platform')
     injury_severity = why_block.get('injury_severity')
+    channel = why_block.get('radicalization_channel')
 
 
     if not case_number or "Tidak Diketahui" in case_number or "Data Kosong" in case_number:
@@ -868,21 +817,15 @@ def import_cases(json_file_path):
             print(f"GAGAL INSERT: Pengadilan '{court_name}' belum ada di DB untuk kasus {case_number}")
             return
         
-        channel_id = get_channel_id(cursor, channel_name)
-        if not channel_id:
-            print(f"GAGAL INSERT: Pengadilan '{channel_name}' belum ada di DB untuk kasus {case_number}")
-            return
-        
 
         insert_query = """
-            INSERT INTO cases(case_number, court_id, id_channel, process_level, indictment_model, verdict_outcome,
+            INSERT INTO cases(case_number, court_id, process_level, indictment_model, verdict_outcome,
             prison_term_years, prison_term_months, detention_credit, court_date, arrest_date, appeal_timeline,
             has_attack_plan, attack_plan_summary, communication, injury_severity, created_at, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
             ON CONFLICT (case_number)
             DO UPDATE SET
-                court_id = EXCLUDED.court_id, 
-                id_channel = EXCLUDED.id_channel,
+                court_id = EXCLUDED.court_id,
                 process_level = EXCLUDED.process_level, 
                 indictment_model = EXCLUDED.indictment_model, 
                 verdict_outcome = EXCLUDED.verdict_outcome,
@@ -896,13 +839,14 @@ def import_cases(json_file_path):
                 attack_plan_summary = EXCLUDED.attack_plan_summary,
                 communication = EXCLUDE.communication
                 injury_severity = EXCLUDE.injury_severity
+                channel = EXCLUDE.radicalization_channel
                 updated_at = NOW()
             RETURNING id;
         """
 
-        cursor.execute(insert_query, (case_number, court_id, channel_id, process_level, indictment_model, verdict_outcome,
+        cursor.execute(insert_query, (case_number, court_id, process_level, indictment_model, verdict_outcome,
             prison_term_years, prison_term_months, detention_credit, court_date, arrest_date, appeal_timeline,
-            has_attack_plan, attack_plan_summary, communication, injury_severity))
+            has_attack_plan, attack_plan_summary, communication, injury_severity, channel))
         case_id = cursor.fetchone()['id']
         conn.commit()
 
@@ -917,111 +861,72 @@ def import_cases(json_file_path):
             cursor.close()
             conn.close()
 
-def import_classified_aggravating(json_path):
+def import_classified_master(json_path):
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    classified_aggravating = data.get("why", {}).get("classified_aggravating_factors", [])
-    if isinstance(classified_aggravating, str):
-        classified_aggravating = [classified_aggravating]
+    why_block = data.get("why", {})
 
-    if not classified_aggravating:
-        print("Tidak ada classified_aggravating di file")
-        return
+    factor_mappings = {
+        "classified_aggravating_factors": "aggravating",
+        "classified_motivation_factors": "motivation",
+        "classified_radicalization_sources": "radicalization"
+    }
     
     conn = None
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor()
         
-        aggravating_baru = 0
-        aggravating_lama = 0
+        total_baru = 0
+        total_lama = 0
 
-        for classified_name in classified_aggravating:
-            clean_aggravating_name = classified_name.strip()
-            if not clean_aggravating_name:
-                continue
+        for json_key, classified_type in factor_mappings.items():
+            
+            factors_list = why_block.get(json_key, [])
+            
+            if isinstance(factors_list, str):
+                factors_list = [factors_list]
 
-            cursor.execute("SELECT id FROM public.classified_aggravating WHERE classified_name = %s", (clean_aggravating_name,))
-            result = cursor.fetchone()
+            if not factors_list:
+                continue 
 
-            if result:
-                aggravating_id = result[0]
-                aggravating_lama += 1
-            else:
-                insert_query = """
-                    INSERT INTO public.classified_aggravating (classified_name, created_at, updated_at)
-                    VALUES (%s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    RETURNING id;
+            for classified_name in factors_list:
+                clean_name = classified_name.strip()
+                if not clean_name:
+                    continue
+
+                check_query = """
+                    SELECT id FROM public.classified_factors_source 
+                    WHERE classified_name = %s AND classified_type = %s
                 """
+                cursor.execute(check_query, (clean_name, classified_type))
+                result = cursor.fetchone()
 
-                cursor.execute(insert_query, (clean_aggravating_name,))
-
-                aggravating_id = cursor.fetchone()[0]
-                aggravating_baru += 1
-                print(f"Classified Aggravating BARU ditambahkan: {clean_aggravating_name} (ID: {aggravating_id})")
+                if result:
+                    total_lama += 1
+                else:
+                    insert_query = """
+                        INSERT INTO public.classified_factors_source 
+                        (classified_name, classified_type, created_at, updated_at)
+                        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        RETURNING id;
+                    """
+                    cursor.execute(insert_query, (clean_name, classified_type))
+                    new_id = cursor.fetchone()[0]
+                    total_baru += 1
+                    
+                    print(f"✅ BARU [{classified_type.upper()}]: {clean_name} (ID: {new_id})")
 
         conn.commit()
-        print(f"Selesai, {aggravating_baru} Baru, {aggravating_lama} Sudah Ada")
-
-    except Exception as e:
-        print(f"Error database: {e}")
-        if conn:
-            conn.rollback()
-    finally:
-        if conn:
-            cursor.close()
-            conn.close()
-
-def import_classified_motivation(json_path):
-    with open(json_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-
-    classified_motivation = data.get("why", {}).get("classified_motivation_factors", [])
-    if isinstance(classified_motivation, str):
-        classified_motivation = [classified_motivation]
-
-    if not classified_motivation:
-        print("Tidak ada classified_motivation di file")
-        return
-    
-    conn = None
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cursor = conn.cursor()
         
-        motivation_baru = 0
-        motivation_lama = 0
-
-        for classified_name in classified_motivation:
-            clean_motivation_name = classified_name.strip()
-            if not clean_motivation_name:
-                continue
-
-            cursor.execute("SELECT id FROM public.classified_motivation WHERE classified_name = %s", (clean_motivation_name,))
-            result = cursor.fetchone()
-
-            if result:
-                motivation_id = result[0]
-                motivation_lama += 1
-            else:
-                insert_query = """
-                    INSERT INTO public.classified_motivation (classified_name, created_at, updated_at)
-                    VALUES (%s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    RETURNING id;
-                """
-
-                cursor.execute(insert_query, (clean_motivation_name,))
-
-                motivation_id = cursor.fetchone()[0]
-                motivation_baru += 1
-                print(f"Classified Motivation BARU ditambahkan: {clean_motivation_name} (ID: {motivation_id})")
-
-        conn.commit()
-        print(f"Selesai, {motivation_baru} Baru, {motivation_lama} Sudah Ada")
+        if total_baru > 0 or total_lama > 0:
+            print(f"🎉 Selesai import {json_path}: {total_baru} Baru, {total_lama} Sudah Ada")
+        else:
+            print(f"⏩ SKIP: Tidak ada data classified apa pun di file {json_path}")
 
     except Exception as e:
-        print(f"Error database: {e}")
+        print(f"❌ Error database: {e}")
         if conn:
             conn.rollback()
     finally:
@@ -1039,109 +944,104 @@ def get_case_id(cursor, case):
 
     return result[0] if result else None
 
-def get_aggravating_id(cursor, aggravating):
-    if not aggravating:
-        return []
-
-    if isinstance(aggravating, str):
-        aggravating = [aggravating]
-
-    ids = []
-
-    for aggr in aggravating:
-        cursor.execute("""
-            SELECT id FROM classified_aggravating
-            WHERE LOWER(TRIM(classified_name)) = LOWER(TRIM(%s))
-            LIMIT 1
-        """, (aggr,))
-        
-        result = cursor.fetchone()
-        if result:
-            ids.append(result[0])
-        else:
-            print(f"TIDAK DITEMUKAN: {aggr}")
-
-    return ids
-
-def get_motivation_id(cursor, motivation):
-    if not motivation:
+def get_classified_id(cursor, classified):
+    if not classified:
         return []
     
-    if isinstance(motivation, str):
-        motivation = [motivation]
+    if isinstance(classified, str):
+        classified = [classified]
 
     ids = []
 
-    for mot in motivation:
-        cursor.execute("SELECT id FROM classified_motivation WHERE LOWER(TRIM(classified_name)) = LOWER(TRIM(%s)) LIMIT 1", (mot,))
+    for cls in classified:
+        cursor.execute("SELECT id FROM classified_factors_source WHERE LOWER(TRIM(classified_name)) = LOWER(trim(%s)) LIMIT 1", (cls,))
         result = cursor.fetchone()
         if result:
             ids.append(result[0])
         else:
-            print(f"TIDAK DITEMUKAN: {mot}")
+            print(f"TIDAK DITEMUKAN: {cls}")
 
-    return ids
+        return ids
 
 def import_aggravating_factors(json_path):
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    aggravating_factors = data.get("why", {}).get("aggravating_factors", [])
-    classified_name = data.get("why", {}).get("classified_aggravating_factors", None)
-    case_number = data.get("what", {}).get("case_number", None)
+    aggravatings = data.get("why", {}).get("aggravating_factors", [])
+    classifieds = data.get("why", {}).get("classified_aggravating_factors", [])
+    case_number = data.get("what", {}).get("case_number", "")
 
-    if isinstance(aggravating_factors, str):
-        aggravating_factors = [aggravating_factors]
+    # Ubah ke list jika ternyata bentuknya cuma string tunggal
+    if isinstance(aggravatings, str): aggravatings = [aggravatings]
+    if isinstance(classifieds, str): classifieds = [classifieds]
 
-    if not aggravating_factors:
-        print("Tidak ada aggravating factors di file")
+    if not aggravatings or not classifieds:
+        print(f"⏩ SKIP: Data aggravating / classified kosong di file {json_path}")
         return
-    
+
     conn = None
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor()
         
-        aggravating_baru = 0
-        aggravating_lama = 0
+        motivation_baru = 0
+        motivation_lama = 0
 
-        id_cases = get_case_id(cursor, case_number)
-        ids = get_aggravating_id(cursor, classified_name)
+        if "xxx" in case_number.lower():
+            import os
+            nama_file = os.path.basename(json_path)
+            case_number = f"{case_number} [Sensor: {nama_file}]"
 
-        insert_query = """
-            INSERT INTO public.aggravating_factors (id_cases, id_aggravating, description, created_at, updated_at)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            RETURNING id;
-        """
+        cursor.execute("SELECT id FROM public.cases WHERE case_number = %s", (case_number,))
+        res_case = cursor.fetchone()
+        if not res_case:
+            print(f"⚠️ SKIP: Kasus {case_number} belum ada di tabel cases.")
+            return
+        id_cases = res_case[0]
 
-        for description in aggravating_factors:
-            clean_description = description.strip()
-            if not clean_description:
+        for desc, classified_name in zip(aggravatings, classifieds):
+            clean_desc = desc.strip()
+            clean_class = classified_name.strip()
+
+            if not clean_desc or not clean_class:
                 continue
 
-            cursor.execute(
-                "SELECT id FROM public.aggravating_factors WHERE description = %s",
-                (clean_description,)
-            )
-            result = cursor.fetchone()
+            cursor.execute("""
+                SELECT id FROM public.classified_factors_source 
+                WHERE classified_name = %s AND classified_type = 'aggravating'
+            """, (clean_class,))
+            res_class = cursor.fetchone()
+            
+            if not res_class:
+                print(f"⚠️ GAGAL: Klasifikasi '{clean_class}' belum terdaftar di tabel master.")
+                continue
+            id_classified = res_class[0]
 
-            if result:
-                aggravating_lama += 1
+            cursor.execute("""
+                SELECT id FROM public.aggravating_factors 
+                WHERE id_cases = %s AND id_classified = %s AND description = %s
+            """, (id_cases, id_classified, clean_desc))
+            
+            if cursor.fetchone():
+                motivation_lama += 1
             else:
-                for clean_description, id_aggravating in zip(aggravating_factors, ids):
-                    cursor.execute(insert_query, (id_cases, id_aggravating, clean_description))
-                    new_id = cursor.fetchone()[0]
-                    print(f"BARU: {clean_description} (ID: {new_id})")
-                
-                aggravating_baru += 1
+                insert_query = """
+                    INSERT INTO public.aggravating_factors 
+                    (id_cases, id_classified, description, created_at, updated_at)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+                cursor.execute(insert_query, (id_cases, id_classified, clean_desc))
+                motivation_id = cursor.fetchone()[0]
+                motivation_baru += 1
+                print(f"✅ BARU: [{clean_class}] -> {clean_desc[:30]}... (ID: {motivation_id})")
 
         conn.commit()
-        print(f"Selesai: {aggravating_baru} Baru, {aggravating_lama} Sudah Ada")
+        print(f"🎉 Selesai {json_path}: {motivation_baru} Baru, {motivation_lama} Sudah Ada")
 
     except Exception as e:
-        print(f"Error database: {e}")
-        if conn:
-            conn.rollback()
+        print(f"❌ Error database: {e}")
+        if conn: conn.rollback()
     finally:
         if conn:
             cursor.close()
@@ -1151,18 +1051,18 @@ def import_motivation_factors(json_path):
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    motivation_factors = data.get("why", {}).get("motivation_factors", [])
-    classified_name = data.get("why", {}).get("classified_motivation_factors", None)
-    case_number = data.get("what", {}).get("case_number", None)
+    motivations = data.get("why", {}).get("motivation_factors", [])
+    classifieds = data.get("why", {}).get("classified_motivation_factors", [])
+    case_number = data.get("what", {}).get("case_number", "")
 
+    # Ubah ke list jika ternyata bentuknya cuma string tunggal
+    if isinstance(motivations, str): motivations = [motivations]
+    if isinstance(classifieds, str): classifieds = [classifieds]
 
-    if isinstance(motivation_factors, str):
-        motivation_factors = [motivation_factors]
-
-    if not motivation_factors:
-        print("Tidak ada motivation factors di file")
+    if not motivations or not classifieds:
+        print(f"⏩ SKIP: Data motivation / classified kosong di file {json_path}")
         return
-    
+
     conn = None
     try:
         conn = psycopg2.connect(**DB_CONFIG)
@@ -1171,40 +1071,145 @@ def import_motivation_factors(json_path):
         motivation_baru = 0
         motivation_lama = 0
 
-        ids = get_motivation_id(cursor, classified_name)
-        id_cases = get_case_id(cursor, case_number)
+        if "xxx" in case_number.lower():
+            import os
+            nama_file = os.path.basename(json_path)
+            case_number = f"{case_number} [Sensor: {nama_file}]"
 
-        insert_query = """
-            INSERT INTO public.motivation_factors (id_cases, id_motivation, description, created_at, updated_at)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            RETURNING id;
-        """
-        
-        for description in motivation_factors:
-            clean_description = description.strip()
-            if not clean_description:
+        cursor.execute("SELECT id FROM public.cases WHERE case_number = %s", (case_number,))
+        res_case = cursor.fetchone()
+        if not res_case:
+            print(f"⚠️ SKIP: Kasus {case_number} belum ada di tabel cases.")
+            return
+        id_cases = res_case[0]
+
+        for desc, classified_name in zip(motivations, classifieds):
+            clean_desc = desc.strip()
+            clean_class = classified_name.strip()
+
+            if not clean_desc or not clean_class:
                 continue
 
-            cursor.execute("SELECT id FROM public.motivation_factors WHERE description = %s", (clean_description,))
-            result = cursor.fetchone()
+            cursor.execute("""
+                SELECT id FROM public.classified_factors_source 
+                WHERE classified_name = %s AND classified_type = 'motivation'
+            """, (clean_class,))
+            res_class = cursor.fetchone()
+            
+            if not res_class:
+                print(f"⚠️ GAGAL: Klasifikasi '{clean_class}' belum terdaftar di tabel master.")
+                continue
+            id_classified = res_class[0]
 
-            if result:
+            cursor.execute("""
+                SELECT id FROM public.motivation_factors 
+                WHERE id_cases = %s AND id_classified = %s AND description = %s
+            """, (id_cases, id_classified, clean_desc))
+            
+            if cursor.fetchone():
                 motivation_lama += 1
             else:
-                for clean_description, id_motivation in zip(motivation_factors, ids):
-                    cursor.execute(insert_query, (id_cases, id_motivation, clean_description))
-                    motivation_id = cursor.fetchone()[0]
-                    print(f"BARU: {clean_description} (ID: {motivation_id})")
-
+                insert_query = """
+                    INSERT INTO public.motivation_factors 
+                    (id_cases, id_classified, description, created_at, updated_at)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+                cursor.execute(insert_query, (id_cases, id_classified, clean_desc))
+                motivation_id = cursor.fetchone()[0]
                 motivation_baru += 1
-                
+                print(f"✅ BARU: [{clean_class}] -> {clean_desc[:30]}... (ID: {motivation_id})")
+
         conn.commit()
-        print(f"Selesai: {motivation_baru} Baru, {motivation_lama} Sudah Ada")
+        print(f"🎉 Selesai {json_path}: {motivation_baru} Baru, {motivation_lama} Sudah Ada")
 
     except Exception as e:
-        print(f"Error database: {e}")
+        print(f"❌ Error database: {e}")
+        if conn: conn.rollback()
+    finally:
         if conn:
-            conn.rollback()
+            cursor.close()
+            conn.close()
+
+def import_radicalization_source(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    radicalizations = data.get("why", {}).get("radicalization_sources", [])
+    classifieds = data.get("why", {}).get("classified_radicalization_sources", [])
+    case_number = data.get("what", {}).get("case_number", "")
+
+    # Ubah ke list jika ternyata bentuknya cuma string tunggal
+    if isinstance(radicalizations, str): radicalizations = [radicalizations]
+    if isinstance(classifieds, str): classifieds = [classifieds]
+
+    if not radicalizations or not classifieds:
+        print(f"⏩ SKIP: Data radicalization / classified kosong di file {json_path}")
+        return
+
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        motivation_baru = 0
+        motivation_lama = 0
+
+        if "xxx" in case_number.lower():
+            import os
+            nama_file = os.path.basename(json_path)
+            case_number = f"{case_number} [Sensor: {nama_file}]"
+
+        cursor.execute("SELECT id FROM public.cases WHERE case_number = %s", (case_number,))
+        res_case = cursor.fetchone()
+        if not res_case:
+            print(f"⚠️ SKIP: Kasus {case_number} belum ada di tabel cases.")
+            return
+        id_cases = res_case[0]
+
+        for desc, classified_name in zip(radicalizations, classifieds):
+            clean_desc = desc.strip()
+            clean_class = classified_name.strip()
+
+            if not clean_desc or not clean_class:
+                continue
+
+            cursor.execute("""
+                SELECT id FROM public.classified_factors_source 
+                WHERE classified_name = %s AND classified_type = 'radicalization'
+            """, (clean_class,))
+            res_class = cursor.fetchone()
+            
+            if not res_class:
+                print(f"⚠️ GAGAL: Klasifikasi '{clean_class}' belum terdaftar di tabel master.")
+                continue
+            id_classified = res_class[0]
+
+            cursor.execute("""
+                SELECT id FROM public.radicalization_sources 
+                WHERE id_cases = %s AND id_classified = %s AND description = %s
+            """, (id_cases, id_classified, clean_desc))
+            
+            if cursor.fetchone():
+                motivation_lama += 1
+            else:
+                insert_query = """
+                    INSERT INTO public.radicalization_sources 
+                    (id_cases, id_classified, description, created_at, updated_at)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """
+                cursor.execute(insert_query, (id_cases, id_classified, clean_desc))
+                motivation_id = cursor.fetchone()[0]
+                motivation_baru += 1
+                print(f"✅ BARU: [{clean_class}] -> {clean_desc[:30]}... (ID: {motivation_id})")
+
+        conn.commit()
+        print(f"🎉 Selesai {json_path}: {motivation_baru} Baru, {motivation_lama} Sudah Ada")
+
+    except Exception as e:
+        print(f"❌ Error database: {e}")
+        if conn: conn.rollback()
     finally:
         if conn:
             cursor.close()
@@ -1696,4 +1701,4 @@ def import_case_defendant_details(json_path):
             cursor.close()
             conn.close()
 
-import_case_defendant_details("19_PID~SUS_2022_PN JKT~TIM.json")
+import_motivation_factors("19_PID~SUS_2022_PN JKT~TIM.json")

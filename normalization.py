@@ -693,6 +693,95 @@ def normalize_ideology(x):
 
     return " | ".join(sorted(result)) if result else "Tidak Diketahui"
 
+def normalize_entities(raw_entities):
+    if not raw_entities:
+        return []
+
+    if isinstance(raw_entities, str):
+        items = re.split(r'-{3,}|\n', raw_entities)
+    elif isinstance(raw_entities, list):
+        items = raw_entities
+    else:
+        return []
+
+    result = set()
+
+    for x in items:
+        text = str(x).lower()
+        
+        text = re.sub(r"[^a-z0-9\s/]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+
+        if not text or text in ["none", "unknown", "tidak diketahui", "null"]:
+            continue
+
+        # ==========================================
+        # KELOMPOK TEROR GLOBAL & TIMUR TENGAH
+        # ==========================================
+        if re.search(r"\bisis\b|\bis\b|islamic state|daulah islam|daullah|daulah khilafah", text):
+            result.add("Islamic State (ISIS)")
+        elif re.search(r"qaeda|qaedah|qoidah|qoid|alqoidah", text):
+            result.add("Al-Qaeda")
+        elif re.search(r"nusrah|nusroh|nusra", text):
+            result.add("Jabhah Nusrah")
+        elif re.search(r"\bfsa\b|free syrian army", text):
+            result.add("Free Syrian Army (FSA)")
+        elif re.search(r"\bmilf\b|mujahidin pilipina|mujahidin philipina", text):
+            result.add("Moro Islamic Liberation Front (MILF)")
+
+        # ==========================================
+        # KELOMPOK TEROR & RADIKAL LOKAL (INDONESIA)
+        # ==========================================
+        elif re.search(r"jamaah islamiyah|jemaah islamiyah|jama.ah islamiyah|jamaah islamiah|\bji\b", text):
+            result.add("Jemaah Islamiyah (JI)")
+        elif re.search(r"\bjad\b|anshor daulah|anshorut daulah|ansharut daulah|anshorud daulah|ansor daulah|ansorud daulah", text):
+            result.add("Jamaah Ansharut Daulah (JAD)")
+        elif re.search(r"\bmit\b|mujahidin indonesia timur|\bmti\b|ilham mujahidin", text):
+            result.add("Mujahidin Indonesia Timur (MIT)")
+        elif re.search(r"\bjat\b|anshor tauhid|anshorut tauhid|ansor tauhid", text):
+            result.add("Jamaah Ansharut Tauhid (JAT)")
+        elif re.search(r"\bjak\b|anshor khilafah|ansor khilafah", text):
+            result.add("Jamaah Ansharut Khilafah (JAK)")
+        elif re.search(r"\bmat\b|muhajirin anshor tauhid|muhajirin ansor tauhid", text):
+            result.add("Muhajirin Ansharut Tauhid (MAT)")
+        elif re.search(r"\bnii\b|negara islam indonesia|nii kw|faksi myt|yusuf tohiri|yusuf thohiry", text):
+            result.add("Negara Islam Indonesia (NII)")
+        elif re.search(r"\bmmi\b|majelis mujahidin", text):
+            result.add("Majelis Mujahidin Indonesia (MMI)")
+
+        # ==========================================
+        # ORGANISASI MASYARAKAT / FRONTAL
+        # ==========================================
+        elif re.search(r"\bfpi\b|front pembela islam", text):
+            result.add("Front Pembela Islam (FPI)")
+        elif re.search(r"\bhti\b|hizbut tahrir|hizbu tahir", text):
+            result.add("Hizbut Tahrir Indonesia (HTI)")
+        elif re.search(r"\bgaris\b|gerakan reformis islam", text):
+            result.add("Gerakan Reformis Islam (GARIS)")
+        elif re.search(r"almanar|nahi munkar|nahi mungkar", text):
+            result.add("Aliansi Masyarakat Nahi Mungkar (Almanar)")
+        elif re.search(r"\banas\b|anti syiah", text):
+            result.add("Aliansi Nasional Anti Syiah (ANAS)")
+        elif re.search(r"fordai|forum dakwah islam", text):
+            result.add("Forum Dakwah Islamiyah (FORDAI)")
+        elif re.search(r"\btpm\b|tim pengacara muslim", text):
+            result.add("Tim Pengacara Muslim (TPM)")
+
+        # ==========================================
+        # YAYASAN PENDANAAN / SAYAP ORGANISASI
+        # ==========================================
+        elif re.search(r"syam organizer|soda", text):
+            result.add("Syam Organizer")
+        elif re.search(r"abdurrahman bin auf|laz aba|\baba\b", text):
+            result.add("LAZ Abdurrahman Bin Auf (ABA)")
+        elif re.search(r"one care", text):
+            result.add("Yayasan One Care")
+        elif re.search(r"\bhasi\b|hilal amar society", text):
+            result.add("Hilal Amar Society Indonesia (HASI)")
+
+    # 3. Kembalikan sebagai List
+    return sorted(list(result))
+
 def split_field(text, sep="\n---\n"):
     """Fungsi pembantu untuk memecah string yang digabung dengan separator khusus."""
     if not text or str(text).strip().lower() in ["", "unknown", "none", "null"]:
@@ -924,89 +1013,93 @@ def process_and_classify_list(raw_text, classify_func):
 
     return sorted(categories) if categories else ["Tidak Diketahui"]
 
-import re
 
 def normalize_evidence_items(data):
     what_obj = data.get("what", {})
-    
     if not isinstance(what_obj, dict):
         return data
         
-    # ==========================================
-    # 🌟 FUNGSI HELPER: KATEGORISASI (Agar bisa dipakai berulang)
-    # ==========================================
-    def categorize_item(raw_desc):
-        category = "other"
-        clean_name = raw_desc.title() # Default pakai nama asli jika tidak masuk kategori
+    all_evidence = []
+    
+    valid_units = [
+        "buah", "lembar", "pucuk", "bilah", "butir", "set", "unit", 
+        "paket", "bungkus", "keping", "batang", "helai", "pasang", 
+        "bundel", "buku", "dus", "kotak", "plastik", "karung", 
+        "botol", "jerigen", "kaleng", "ekor", "linting", "potong", 
+        "rol", "roll", "kardus", "kampil", "sak", "biji", "kodi", "drum", "lembar"
+    ]
 
-        if any(k in raw_desc for k in ["pcp", "moser", "predator", "shotgun", "senapan angin"]):
-            category = "weapon"
-            clean_name = "Senjata Angin PCP"
-        elif any(k in raw_desc for k in ["revolver", "pistol", "rakitan", "fn", "m16", "laras panjang"]):
-            category = "weapon"
-            clean_name = "Senjata Api / Amunisi"
-        elif any(k in raw_desc for k in ["parang", "golok", "samurai", "pisau", "celurit", "sangkur"]):
-            category = "weapon"
-            clean_name = "Senjata Tajam"
-        elif any(k in raw_desc for k in ["bom", "handak", "detonator", "belerang", "mesiu", "black powder"]):
-            category = "explosive"
-            clean_name = "Bahan Peledak / Komponen Bom"
-        elif any(k in raw_desc for k in ["hp", "handphone", "ponsel", "nokia", "samsung", "xiaomi", "sim card"]):
-            category = "phone"
-            clean_name = "Telepon Seluler / SIM Card"
-        elif any(k in raw_desc for k in ["laptop", "flashdisk", "harddisk", "memory card", "cpu"]):
-            category = "electronic" # Lebih spesifik dari 'other'
-            clean_name = "Perangkat Digital / Penyimpanan"
-        elif any(k in raw_desc for k in ["buku", "kitab", "dokumen", "selebaran", "buletin", "paspor", "ktp", "sim "]):
-            category = "document"
-            clean_name = "Buku / Dokumen Fisik"
-        elif any(k in raw_desc for k in ["uang", "rupiah", "cash", "atm", "rekening", "dolar"]):
-            category = "cash"
-            clean_name = "Uang Tunai / Instrumen Keuangan"
-        elif any(k in raw_desc for k in ["motor", "mobil", "stnk", "bpkb"]):
-            category = "vehicle"
-            clean_name = "Kendaraan Bermotor"
-
-        return clean_name, category
-
-    # ==========================================
-    # 1. NORMALISASI evidence_items
-    # ==========================================
-    evidence_items = what_obj.get("evidence_items", [])
-    if isinstance(evidence_items, list):
-        for item in evidence_items:
-            raw_desc = str(item.get("description", "")).lower().strip()
-            clean_name, category = categorize_item(raw_desc)
-
-            item["normalized_name"] = clean_name
-            item["item_category"] = category
+    def extract_and_clean(desc_text):
+        qty = 1
+        unit = "pcs"
+        clean_desc = desc_text
+        
+        match = re.search(r'^(\d+)\s+([a-zA-Z]+)', desc_text)
+        
+        if match:
+            qty = int(match.group(1))
+            detected_word = match.group(2).lower()
             
-            # Amankan Quantity
-            try:
-                item["quantity"] = int(item.get("quantity", 1))
-            except:
-                item["quantity"] = 1
+            if detected_word in valid_units:
+                unit = detected_word
+                clean_desc = desc_text[match.end():].strip()
+            else:
+                match_number = re.search(r'^(\d+)\s+', desc_text)
+                if match_number:
+                    clean_desc = desc_text[match_number.end():].strip()
+                    
+        return qty, unit, clean_desc
 
     # ==========================================
-    # 2. NORMALISASI evidence_disposition
+    # 1. NORMALISASI evidence_items (Dakwaan)
     # ==========================================
-    evidence_dispositions = what_obj.get("evidence_disposition", [])
-    if isinstance(evidence_dispositions, list):
-        for item in evidence_dispositions:
-            raw_desc = str(item.get("item_description", "")).lower().strip()
-            clean_name, category = categorize_item(raw_desc)
+    items = what_obj.get("evidence_items", [])
+    if isinstance(items, list):
+        for item in items:
+            desc = str(item.get("description", "")).strip()
+            if not desc or desc.lower() == "none": continue
 
-            item["normalized_name"] = clean_name
-            item["item_category"] = category
-            
+            ext_qty, ext_unit, clean_desc = extract_and_clean(desc)
+
+            final_desc = clean_desc if clean_desc else desc
+
+            all_evidence.append({
+                "description": final_desc,
+                "quantity": ext_qty,
+                "unit": ext_unit,
+                "disposition": "Tidak Diketahui"
+            })
+
+    # ==========================================
+    # 2. NORMALISASI evidence_disposition (Putusan)
+    # ==========================================
+    dispositions = what_obj.get("evidence_disposition", [])
+    if isinstance(dispositions, list):
+        for item in dispositions:
+            desc = str(item.get("item_description", "")).strip()
+            if not desc or desc.lower() == "none": continue
+
             raw_disp = str(item.get("disposition", "")).strip()
-            item["disposition"] = raw_disp if raw_disp and raw_disp != "None" else "Tidak Diketahui"
+            disp = raw_disp if raw_disp and raw_disp.lower() != "none" else "Tidak Diketahui"
 
-            quantity = 1
-            match = re.search(r'^(\d+)\s', raw_desc)
-            if match:
-                quantity = int(match.group(1))
-            item["quantity"] = quantity
+            ext_qty, ext_unit, clean_desc = extract_and_clean(desc)
+            
+            final_desc = clean_desc if clean_desc else desc
+
+            all_evidence.append({
+                "description": final_desc,
+                "quantity": ext_qty,
+                "unit": ext_unit,
+                "disposition": disp
+            })
+
+    # ==========================================
+    # UPDATE JSON UTAMA
+    # ==========================================
+    what_obj["evidence_items"] = all_evidence
+    
+    if "evidence_disposition" in what_obj:
+        del what_obj["evidence_disposition"]
 
     data["what"] = what_obj
     return data
@@ -1350,6 +1443,9 @@ def process_file(data):
 
     ideology_raw = data["who"].get("defendant_ideology_affiliation")
     data["who"]["defendant_ideology_affiliation"] = normalize_ideology(ideology_raw)
+
+    entities_raw = data["who"].get("related_entities")
+    data["who"]["related_entities"] = normalize_entities(entities_raw)
 
     raw_network = data["who"].get("defendant_local_network")
 
