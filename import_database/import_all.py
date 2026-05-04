@@ -11,58 +11,96 @@ DB_CONFIG = {
     "port": "5433"
 }
 
-def import_entities(json_path):
+def import_case_entities(json_path):
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    related_entities = data.get("who", {}).get("related_entities", [])
+    who_block = data.get("who", {})
+    what_block = data.get("what", {})
+    case_number = what_block.get("case_number", "")
 
-    if isinstance(related_entities, str):
-        related_entities = [related_entities]
+    related_entities = who_block.get("related_entities", [])
+    investigators = who_block.get("investigators", [])
+    ideology = who_block.get("defendant_ideology_affiliation", [])
 
-    if not related_entities:
-        print("Tidak ada data related_entities di JSON ini.")
+    if isinstance(related_entities, str): related_entities = [related_entities]
+    if isinstance(investigators, str): investigators = [investigators]
+    if isinstance(ideology, str): ideology = [ideology]
+
+    all_entities = []
+    for item in related_entities:
+        all_entities.append((item, "Organization", "affiliation"))
+        
+    for item in investigators:
+        all_entities.append((item, "Investigator", "handled_by"))
+        
+    for item in ideology:
+        all_entities.append((item, "Ideology/Affiliation", "ideology_source"))
+
+    if not all_entities:
+        print(f"⏩ SKIP: Tidak ada entitas di {json_path}.")
         return
-    
+
     conn = None
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor()
-        
-        entitas_baru = 0
-        entitas_lama = 0
-        
-        for entity_name in related_entities:
-            entity_name_clean = entity_name.strip()
-            if not entity_name_clean:
+
+        if "xxx" in case_number.lower():
+            nama_file = os.path.basename(json_path)
+            case_number = f"{case_number} [Sensor: {nama_file}]"
+
+        cursor.execute("SELECT id FROM public.cases WHERE case_number = %s", (case_number,))
+        res_case = cursor.fetchone()
+        if not res_case:
+            print(f"⚠️ SKIP: Kasus {case_number} belum ada di tabel cases.")
+            return
+        case_id = res_case[0]
+
+        relasi_baru = 0
+
+        for entity_name, entity_type, relation_type in all_entities:
+            entity_name_clean = str(entity_name).strip()
+            if not entity_name_clean or entity_name_clean.lower() in ["none", "tidak diketahui", "null", ""]:
                 continue
 
-            cursor.execute("SELECT id FROM public.entities WHERE entity_name = %s", (entity_name_clean,))
-            result = cursor.fetchone()
+            cursor.execute("""
+                SELECT id FROM public.entities 
+                WHERE entity_name = %s AND entity_type = %s
+            """, (entity_name_clean, entity_type))
+            res_entity = cursor.fetchone()
             
-            if result:
-                entity_id = result[0]
-                entitas_lama += 1
+            if res_entity:
+                entity_id = res_entity[0]
             else:
-                insert_query = """
+                cursor.execute("""
                     INSERT INTO public.entities (entity_name, entity_type, created_at, updated_at)
                     VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     RETURNING id;
-                """
-                
-                cursor.execute(insert_query, (entity_name_clean, "Tidak Diketahui"))
-                
+                """, (entity_name_clean, entity_type))
                 entity_id = cursor.fetchone()[0]
-                entitas_baru += 1
-                print(f"Entitas BARU ditambahkan: '{entity_name_clean}' (ID: {entity_id})")
-        
+
+            cursor.execute("""
+                SELECT id FROM public.case_entities 
+                WHERE case_id = %s AND entity_id = %s AND relation_type = %s
+            """, (case_id, entity_id, relation_type))
+            
+            if not cursor.fetchone():
+                insert_rel_query = """
+                    INSERT INTO public.case_entities 
+                    (case_id, entity_id, relation_type, created_at, updated_at)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+                """
+                cursor.execute(insert_rel_query, (case_id, entity_id, relation_type))
+                relasi_baru += 1
+                print(f"✅ RELASI BARU: Kasus -> {relation_type} -> '{entity_name_clean}'")
+
         conn.commit()
-        print(f"✅ Selesai! {entitas_baru} Entitas Baru, {entitas_lama} Entitas Sudah Ada.")
+        print(f"🎉 Selesai {json_path}: {relasi_baru} relasi ditambahkan ke kasus.")
 
     except Exception as e:
-        print(f"❌ Terjadi Error: {e}")
-        if conn:
-            conn.rollback() 
+        print(f"❌ Error database: {e}")
+        if conn: conn.rollback() 
     finally:
         if conn:
             cursor.close()
@@ -1701,4 +1739,90 @@ def import_case_defendant_details(json_path):
             cursor.close()
             conn.close()
 
-import_motivation_factors("19_PID~SUS_2022_PN JKT~TIM.json")
+def import_case_activities(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    target_block = data.get("what", {}) 
+    case_number = data.get("what", {}).get("case_number", "")
+
+    activity_keys = ["pelatihan_activities", "perencanaan_activities", "tindakan_activities"]
+
+    has_activities = any(target_block.get(k) for k in activity_keys)
+    if not has_activities:
+        print(f"⏩ SKIP: Tidak ada data aktivitas di {json_path}")
+        return
+
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+
+        if "xxx" in case_number.lower():
+            nama_file = os.path.basename(json_path)
+            case_number = f"{case_number} [Sensor: {nama_file}]"
+
+        cursor.execute("SELECT id FROM public.cases WHERE case_number = %s", (case_number,))
+        res_case = cursor.fetchone()
+        if not res_case:
+            print(f"⚠️ SKIP: Kasus {case_number} belum ada di tabel cases.")
+            return
+        case_id = res_case[0]
+
+        def get_province_id(prov_name):
+            if not prov_name: return None
+            cursor.execute("SELECT id FROM public.provinces WHERE province_name ILIKE %s LIMIT 1", (f"%{prov_name}%",))
+            res = cursor.fetchone()
+            return res[0] if res else None
+
+        def get_city_id(city_name):
+            if not city_name: return None
+            cursor.execute("SELECT id FROM public.cities WHERE city_name ILIKE %s LIMIT 1", (f"%{city_name}%",))
+            res = cursor.fetchone()
+            return res[0] if res else None
+
+        total_inserted = 0
+
+        for key in activity_keys:
+            activities_list = target_block.get(key, [])
+            
+            activity_type = key.replace("_activities", "") 
+            
+            for act in activities_list:
+                # Ekstrak data teks
+                time_str = act.get("time")
+                location_str = act.get("location")
+                desc_str = act.get("description")
+                loc_source = act.get("location_source")
+                
+                est_year = act.get("estimated_year")
+                est_month = act.get("estimated_month")
+                
+                prov_id = get_province_id(act.get("estimated_province"))
+                city_id = get_city_id(act.get("estimated_city"))
+
+                insert_query = """
+                    INSERT INTO public.case_activities 
+                    (case_id, activity_type, activity_time, location, description, 
+                     location_source, estimated_year, estimated_month, 
+                     estimated_province_id, estimated_city_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+                cursor.execute(insert_query, (
+                    case_id, activity_type, time_str, location_str, desc_str,
+                    loc_source, est_year, est_month, prov_id, city_id
+                ))
+                total_inserted += 1
+
+        conn.commit()
+        print(f"SUKSES: {total_inserted} aktivitas berhasil dimasukkan untuk kasus ID: {case_id}")
+
+    except Exception as e:
+        print(f"Error Database: {e}")
+        if conn: conn.rollback()
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+import_case_activities("19_PID~SUS_2022_PN JKT~TIM.json")

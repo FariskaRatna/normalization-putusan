@@ -791,56 +791,102 @@ def split_field(text, sep="\n---\n"):
 def classify_source(x):
     """Mengklasifikasikan satu teks sumber radikalisasi ke dalam kategori."""
     if not x or str(x).strip().lower() in ["", "unknown", "none", "null"]:
-        return "Data Tidak Lengkap"
+        return ["Tidak Diketahui"]
         
     x = str(x).lower()
     
-    # Video/Digital ISIS
-    if any(k in x for k in ["video","isis","daulah","peperangan","eksekusi","rilisan","youtube",
-                              "nasyid","film","propaganda","konten","streaming"]):
+    if any(k in x for k in [
+        "isis","daulah","suriah","irak","eksekusi","peperangan","bom bunuh","istisyadiah",
+        "nasyid","video propaganda","rilisan","mujahidin","fa'i","ghonimah","harta rampasan",
+        "abu bakar al baghda","abu bakar ba'asyir","abu bakar baasyir","amrosi","aman abdurahman",
+        "abu jandal","salim mubarak","video jihad","video tentang jihad","video tutorial pembuatan bom",
+        "video abu","video amrosi","video-video tentang jihad","video yang diunggah","bahrumnaim",
+        "jihad global","sosialisasi jihad","sosialisasi tentang jihad","ajakan untuk menegakkan",
+        "hukum syariat islam","pelajaran jihad","pelajaran cara membuat bom","materi jihad",
+        "materi tentang jihad","artikel tentang keutamaan hijrah","artikel-artikel","artikel dustin",
+        "panduan pupji","pupji","tastos","tamkin","strataji","materi strategi dakwah",
+        "materi sosialisasi strataji","tid","tahasus","takwiyah ruhiyah","jasmaniyah",
+        "10 pembatal keislaman","syrik demokrasi","kufur","thogut","istishadiah",
+        "demokrasi kafir","kafir","memeranginya","seruan dari abu bakar",
+        "teleconference dengan aman","daurah","taklim","tauziah"
+    ]):
         return "Video/Konten Digital ISIS"
-    # Media Sosial/Chat
-    if any(k in x for k in ["facebook","whatsapp","telegram","group","grup","channel",
-                              "media sosial","medsos","akun","instagram","website","internet",
-                              "online","twitter","wa ","fb ","chat","broadcast","aplikasi",
-                              "e-mail","email","tiktok"]):
+    
+    if any(k in x for k in [
+        "facebook","whatsapp","telegram","instagram","youtube","website","situs","web","blog",
+        "online","internet","media sosial","medsos","twitter","tiktok","arrahmah","voa islam",
+        "eramuslim","millahibrahim","ghuroba","manjanik","qiblat","lasdipo","shoutussalam",
+        "al mustaqbal","forum islam","berita islam","voa. islam","al-mustaqbal","ar-rahma",
+        "la'dak","ladak","grup wa","grup whats app","grup bbm","akun face book","akun facebook",
+        "media social","media elektronik","aplikasi amn","channel",
+        "siaran telivisi","menonton berita","menonton acara televisi","televisi","tv"
+    ]):
         return "Media Sosial/Chat"
-    # Kajian/Pengajian Informal
-    if any(k in x for k in ["kajian","pengajian","ustadz","ceramah","majelis","halaqah",
-                              "tarbiyah","taklim","tabligh","dakwah","tauhid","jihad","hijrah",
-                              "khutbah","khotbah","ta'lim","talim","syirik","aqidah","fiqih",
-                              "muamalah","iman","subuh","magrib","isya","pengurus","pengajar",
-                              "pembicara","penceramah","training","pelatihan agama"]):
+    
+    if any(k in x for k in [
+        "kajian","pengajian","tausiah","tausyiah","ceramah","majelis","halaqah","halaqoh",
+        "dauroh","tabligh","tablig","tablik akbar","kultum","ngaji","tauhid","aqidah","fiqih",
+        "ibadah","ustad","ustadz","ustaz","kyai","pengisi kajian","pengajar","penceramah",
+        "syirik demokrasi","mengikuti materi","taklim","tazkirah","i'tikaf","itikaf","masjid",
+        "dakwah","forum dakwah","amal makruf nahi munkar","hijrah","kewajiban",
+        "pemahaman tentang jihad","azzam dakwah","adc","fordi","forum dakwah islam",
+        "khazanah","pelajaran dari terdakwa"
+    ]):
         return "Kajian/Pengajian Informal"
-    # Pondok/Yayasan
-    if any(k in x for k in ["pesantren","ponpes","yayasan","pondok","madrasah","ma'had"]):
+    
+    if any(k in x for k in [
+        "pesantren","ponpes","pondok","yayasan","madrasah","sekolah","kampus","universitas",
+        "uin","rumah quran","lapas","rutan","islamic university","villa cisarua","mesjid tajaka",
+        "lapangan cindo","café flipflop","masjid al itihad","masjid arridho"
+    ]):
         return "Pondok/Yayasan"
-    # Materi Fisik
-    if any(k in x for k in ["buku","materi","cd","audio","majalah","artikel","modul",
-                              "kitab","leaflet","pamflet","selebaran","dokumen","file","pdf"]):
+    
+    if any(k in x for k in [
+        "buku","kitab","majalah","modul","catatan","pdf","ebook","audio","mp3","dokumen",
+        "manual book","surat","hand phone","hp milik","sms dari","panduan"
+    ]):
         return "Materi Fisik"
-    # Pengaruh/Jaringan
-    if any(k in x for k in ["pengaruh","komunikasi","keluarga","baiat","amir","jamaah",
-                              "kelompok","mit","ji","jad","teman","sahabat","saudara",
-                              "rekrut","merekrut","diajak","dipengaruhi","kontak","bertemu",
-                              "perkenalan","jaringan","anggota","senior","junior","mentor"]):
-        return "Pengaruh/Jaringan"
+    
+    if any(k in x for k in [
+            "keluarga","teman","saudara","tokoh","pertemuan","rapat","rakernas","rapimnas",
+            "turba","organisasi","jaringan","jamaah","baiat","bai'at","bai'at","bai at","rekrut",
+            "diajak","perkenalan","bertemu","kunjungan","camp","pelatihan","tadrib","pimpinan",
+            "amir","mentor","anshor","nii","fkaai","syam organizer","kelompok","komunitas",
+            "interaksi","pengaruh","motivasi dari","saksi","terdakwa","alias","komunikasi dengan",
+            "pembekalan","rakor","panji mas","panji hitam","batalion","jak","jkdn","kabel cas",
+            "turn back crime","prinsip yang dianut","kabar yang berkembang","fpi","fordi","santoso",
+            "abu wardah","abu alqosam","ali kalora","ibrahim","abdullah","firman majid","iskandar",
+            "muhammad imran","abu ainun","sabta","epson","ahyar","asmar","abu uswah","askry",
+            "nungki","sunha","bravo","qoid","tante"
+        ]):
+            return "Pengaruh/Jaringan"
         
     return "Lainnya"
 
+PRIORITY_SOURCE = [
+    "Pengaruh/Jaringan", "Kajian/Pengajian Informal",
+    "Video/Konten Digital ISIS", "Media Sosial/Chat",
+    "Pondok/Yayasan", "Materi Fisik", "Lainnya"
+]
+
+def pick_dominant_source(classified_list):
+    if not classified_list or classified_list == ["Tidak Diketahui"]: 
+        return "Tidak Diketahui"
+    
+    for p in PRIORITY_SOURCE:
+        if p in classified_list: 
+            return p
+            
+    return classified_list[0]
+
 def normalize_radicalization_sources(raw_source):
-    """
-    Fungsi utama untuk normalization.py. 
-    Menerima data mentah (string atau list), memecahnya, dan mengembalikan list unik kategori.
-    """
     if not raw_source:
         return []
         
-    # 1. Pastikan bentuknya List (Menerapkan logika df_d1_base["why_radicalization_sources"].str.split)
+    # Pastikan bentuknya List
     if isinstance(raw_source, str):
-        sources = split_field(raw_source, sep="\n---\n")
-        if not sources: # Jika tidak pakai separator itu, anggap 1 kalimat utuh
-            sources = [raw_source]
+        # Jika masih pakai string gabungan, pecah pakai regex
+        sources = re.split(r'-{3,}|\n', raw_source)
     elif isinstance(raw_source, list):
         sources = raw_source
     else:
@@ -850,12 +896,16 @@ def normalize_radicalization_sources(raw_source):
     for source in sources:
         source_str = str(source).strip()
         
+        if not source_str or source_str.lower() in ["none", "unknown", "tidak diketahui"]:
+            continue
+            
         if len(source_str) > 3: 
-            kategori = classify_source(source_str)
-            if kategori not in ["Data Tidak Lengkap", "Lainnya"]:
+            kategori = classify_source(source_str) 
+            
+            if kategori not in ["Data Tidak Lengkap", "Lainnya", "Tidak Diketahui"]:
                 categories.add(kategori)
 
-    return list(categories) if categories else ["Lainnya"]
+    return sorted(list(categories)) if categories else ["Lainnya"]
 
 
 def classify_radicalization_channel(source_list):
@@ -891,127 +941,224 @@ def classify_motivation(x):
     if not x or str(x).strip().lower() in ["", "nan", "unknown", "tidak diketahui"]:
         return ["Tidak Diketahui"]
 
-    x_lower = str(x).lower()
-    labels = set()
+    x = str(x).lower()
 
-    if any(k in x_lower for k in [
-        "syariat", "khilafah", "daulah", "negara islam", "hukum islam",
-        "hukum allah", "iqomatudin", "kaffah", "kafah", "syariah",
-        "penegakan", "menegakkan", "tegak", "tegaknya", "mendirikan",
-        "merubah", "mengubah", "mengganti", "falsafah", "ideologi",
-        "pancasila", "uud", "demokrasi", "thogut", "anshor thogut",
-        "kafir", "kufur", "murtad",
+    if any(k in x for k in [
+        "syariat","syariah","khilafah","daulah","negara islam","hukum islam","hukum allah",
+        "iqomatudin","kaffah","kafah","penegakan","menegakkan","tegak","tegaknya","mendirikan",
+        "merubah","mengubah","mengganti","falsafah","ideologi","pancasila","uud","demokrasi",
+        "thogut","thagut","taghut","anshor thogut","kafir","kufur","murtad",
+        "sistem kafir","negara kafir","indonesia kafir","tidak sesuai syariat","tidak berhukum"
     ]):
-        labels.add("Ideologi Syariat/Khilafah")
+        return "Ideologi Ekstremis"
 
-    if any(k in x_lower for k in [
-        "jihad", "amaliyah", "amaliah", "bom", "senjata", "perang",
-        "mujahid", "syahid", "mati syahid", "berperang", "memerangi",
-        "melawan", "membunuh", "meledak", "teror", "istishadiah",
-        "i'dad", "idad", "persiapan fisik", "latihan",
+    if any(k in x for k in [
+        "jihad","amaliyah","amaliah","bom","senjata","perang","mujahid","syahid","mati syahid",
+        "sahid","mati sahid","berperang","memerangi","melawan","membunuh","meledak","ledakan",
+        "teror","aksi","penyerangan","pengeboman","istishadiah","i'dad","idad","persiapan fisik",
+        "latihan","tadrib","camp","pelatihan militer","merakit bom","bahan peledak",
+        "mendukung kekerasan","melemahkan musuh","persiapan menghadapi serangan",
+        "menghadapi pki","menghadapi syiah","amali","i'lam"
     ]):
-        labels.add("Jihad/Kekerasan")
+        return "Jihad & Aksi Kekerasan"
 
-    if any(k in x_lower for k in [
-        "hijrah", "berhijrah", "berangkat ke suriah", "ke suriah",
+    if any(k in x for k in [
+        "hijrah","berhijrah","berangkat ke suriah","ke suriah","ke syam","afiliasi suriah",
+        "bergabung di suriah","filipina","luar negeri","negeri syam","hidup di suriah",
+        "keluarga di suriah","ingin hidup bersama keluarga di negeri"
     ]):
-        labels.add("Hijrah")
+        return "Hijrah ke Wilayah Konflik"
 
-    if any(k in x_lower for k in [
-        "pemerintah", "nkri", "pancasila", "thogut", "demokrasi",
-        "anti pemerintah", "polisi", "tni", "polri", "aparat",
-        "tidak berhukum", "kafir karena", "tidak sesuai",
+    if any(k in x for k in [
+        "pemerintah","nkri","pancasila","demokrasi","anti pemerintah","melawan pemerintah",
+        "polisi","tni","polri","aparat","tidak berhukum","tidak sesuai","kafir karena","thogut",
+        "ketidakpuasan","tidak puas","ketidakadilan","tidak adil","kriminalisasi ulama",
+        "memberikan peringatan","hukum negara","membenci hukum","benci hukum",
+        "tidak bisa menerima","kekalahan calon gubernur"
     ]):
-        labels.add("Anti Pemerintah")
+        return "Penolakan Otoritas Negara"
 
-    if any(k in x_lower for k in [
-        "baiat", "bai'at", "amir", "kelompok", "jamaah", "organisasi",
-        "isis", "ji ", "jad", "daulah", "patuh", "taat", "setia",
-        "muahadah", "bergabung", "ikut serta", "ikut andil",
-        "pemimpin", "pimpinan", "amirul mukminin",
+    if any(k in x for k in [
+        "baiat","bai'at","amir","amirul mukminin","kelompok","jamaah","organisasi",
+        "isis","ji ","jad","mit","daulah","patuh","taat","setia","muahadah","bergabung",
+        "ikut serta","ikut andil","pemimpin","pimpinan","anggota","bagian dari","seruan",
+        "perintah amir","membantu ikhwan","membantu para ikhwan","napiter",
+        "perjuangan para napiter","mendukung dhaulah","mendukung daulah",
+        "tunduk dengan segala aturan khalifah","khalifah kaum muslimin",
+        "abu bakar al baghda","mako brimob","dana untuk kegiatan"
     ]):
-        labels.add("Loyalitas Kelompok")
+        return "Loyalitas Kelompok"
 
-    if any(k in x_lower for k in [
-        "balas", "dendam", "sakit hati", "marah", "kecewa",
-        "kesal", "prihatin", "simpatik", "empati", "kemarahan",
-        "ikut-ikutan", "ikut ikutan",
+    if any(k in x for k in [
+        "balas","dendam","sakit hati","marah","kecewa","kesal","kemarahan","emosi","frustrasi",
+        "prihatin","simpatik","empati","ikut-ikutan","ikut ikutan","tersinggung","dipermalukan",
+        "ditolak","tidak diterima","kebencian terhadap","membenci","benci",
+        "percaya syiah membahayakan","syiah membahayakan","tidak bisa menerima kekalahan"
     ]):
-        labels.add("Emosi Personal")
+        return "Emosi Personal"
 
-    if any(k in x_lower for k in [
-        "ridho", "pahala", "membela islam", "membela umat",
-        "agama", "tauhid", "aqidah", "akidah", "membela",
-        "kesolehan", "sholeh", "ibadah", "allah", "quran",
-        "sunah", "sunnah", "meningkatkan", "memperdalam",
-        "memahami", "mempelajari",
+    if any(k in x for k in [
+        "ridho","pahala","membela islam","membela umat","agama","tauhid","aqidah","akidah",
+        "membela","kesolehan","sholeh","ibadah","allah","quran","sunah","sunnah",
+        "meningkatkan","memperdalam","memahami","mempelajari","iman","ukhuwah","ghiroh",
+        "amar makruf","nahi munkar","akhir jaman","akhir zaman","berita akhir zaman",
+        "hadis nabi","hadist nabi","mengikuti hadis","kajian ustad","ceramah","pengaruh ceramah",
+        "berakhidah salimah","akhidah salimah","keyakinan terdakwa","sesuai keyakinan",
+        "istiqomah","sabar dan istiqomah","perjuangan","mendidik kaum muslimin"
     ]):
-        labels.add("Religius/Normatif")
+        return "Keyakinan Keagamaan"
 
-    return list(labels) if labels else ["Tidak Diketahui"]
+    return "Lainnya"
 
 def classify_aggravating(x):
     if not x or str(x).strip().lower() in ["", "nan", "unknown", "tidak diketahui"]:
         return ["Tidak Diketahui"]
 
-    x_lower = str(x).lower()
-    labels = set()
+    x = str(x).lower()
 
-    if any(k in x_lower for k in [
-        "meresahkan", "resah", "cemas", "teror", "takut", "ketakutan",
-        "keresahan", "was-was", "tidak nyaman", "tidak aman", "ketentraman",
-        "suasana teror", "rasa takut",
+    if any(k in x for k in [
+        "tidak mendukung","menghambat","bertentangan","melawan","tidak sejalan","tidak selaras",
+        "mengganggu program pemerintah","program pemerintah","kebijakan pemerintah",
+        "upaya pemerintah","penegakan hukum","menghambat pemberantasan","pemberantasan terorisme",
+        "bertentangan dengan pemerintah","tidak mendukung upaya pemerintah","melawan kebijakan",
+        "mengganggu aparat","tidak patuh hukum","melawan hukum","tidak kooperatif","tidak taat hukum",
+        "berbelit-belit","menutup-nutupi","menghilangkan barang bukti","menghilangkan asal-usul",
+        "tidak terus terang","sedang giat-giatnya memberantas","memberikan arahan untuk menghilangkan"
     ]):
-        labels.add("Meresahkan Masyarakat")
+        return "Tidak Mendukung/Menghambat Program Pemerintah"
 
-    if any(k in x_lower for k in [
-        "tidak mendukung", "bertentangan", "menghambat", "tidak menunjang",
-        "tidak selaras", "melawan hukum",
+    if any(k in x for k in [
+        "korban","meninggal","tewas","luka","cedera","kematian","nyawa","luka berat","luka ringan",
+        "menghilangkan nyawa","banyak korban","korban jiwa","massal","hilangnya nyawa","jatuh korban",
+        "mengakibatkan kematian","menyebabkan kematian","pembunuhan","melukai","melukai orang",
+        "amaliyah","amaliah","membahayakan bagi keselamatan jiwa","membahayakan keselamatan jiwa",
+        "shabu-shabu","narkoba","narkotika","anak dibawah umur","di bawah umur"
     ]):
-        labels.add("Tidak/Menghambat Program Pemerintah")
+        return "Menimbulkan Korban Jiwa"
 
-    if any(k in x_lower for k in [
-        "korban jiwa", "meninggal", "kematian", "nyawa", "tewas",
-        "hilangnya nyawa", "korban", "sadis",
+    if any(k in x for k in [
+        "kerugian","materiil","kerusakan","rusak","harta","benda","aset","properti",
+        "kerugian negara","kerugian ekonomi","fasilitas umum","infrastruktur","kerugian finansial",
+        "kehilangan uang","merugikan","perekonomian","kerugian besar","kerusakan fasilitas",
+        "pembakaran","penghancuran","perusakan","menghancurkan","merusak fasilitas",
+        "bom","ledakan","mengakibatkan kerusakan","transfer uang","bantuan dana","infaq","pendanaan",
+        "menyerahkan rp","memberikan rp","menerima dana","membeli senjata","bahan peledak","semen",
+        "kertas krep","senjata api","amunisi","peluru","senpi","keuntungan dari perbuatan",
+        "kepentingan pribadi","jual beli senpi","weapon training","pelatihan senjata","bongkar pasang senapan"
     ]):
-        labels.add("Menimbulkan Korban Jiwa")
+        return "Kerugian Materiil/Fasilitas"
 
-    if any(k in x_lower for k in [
-        "nkri", "internasional", "citra", "persatuan", "stabilitas",
-        "keamanan negara", "kelangsungan", "keutuhan", "nasionalisme",
-        "perdamaian", "ancaman", "membahayakan", "mengganggu keamanan",
-        "ideologi", "pancasila",
+    if any(k in x for k in [
+        "keamanan negara","ancaman","nkri","kedaulatan","persatuan","kesatuan","keutuhan negara",
+        "stabilitas nasional","stabilitas keamanan","mengganggu keamanan","membahayakan negara",
+        "mengancam negara","ancaman nasional","ancaman internasional","global","citra negara",
+        "nama baik negara","ketahanan nasional","nasionalisme","merusak persatuan",
+        "mengganggu ketertiban negara","mengganggu kehidupan berbangsa","mengancam ideologi pancasila",
+        "tidak mengakui pancasila","tidak mengakui nkri","khilafah","daulah","radikal","ekstrem",
+        "ekstremisme","ideologi negara","mengganti sistem negara","terorisme","tindak pidana teror",
+        "citra yang buruk bagi indonesia","dimata internasional","di mata internasional",
+        "kelangsungan berbangsa dan bernegara","membahayakan keamanan dan keselamatan bangsa",
+        "membahayakan keselamatan negara","kejahatan luar biasa","obyek vital","objek vital",
+        "organisasi terlarang","dilarang di indonesia","dilarang oleh pemerintah indonesia",
+        "jamaah islamiyah","jamaah islamiah","syam organizer","mujahidin indonesia timur",
+        "thogut","mengkafirkan","kafir","syirik demokrasi","sistem demokrasi menjadi negara islam",
+        "mengganti falsafah","menerapkan syariat islam","tidak mengakui hukum yang berlaku",
+        "amirul mukminin","abu bakar al baghda","abu ibrahim","berbaiat","baiiat","baiat kepada",
+        "perang media","pengiriman anggota ji","pelatihan militer di jantho","jabhah nusrah",
+        "hijrah ke suriah","berangkat ke suriah","i'dad","idad","mempersiapkan diri untuk berjihad",
+        "adira","akademi pendidikan dan kaderisasi","tactical training"
     ]):
-        labels.add("Mengancam Keamanan Negara")
+        return "Mengancam Keamanan Negara"
 
-    if any(k in x_lower for k in [
-        "kerugian", "kerusakan", "hancur", "perekonomian", "ekonomi",
-        "fasilitas", "objek vital", "obyek vital", "infrastruktur",
+    if any(k in x for k in [
+        "meresahkan","keresahan","resah","ketakutan","cemas","takut","rasa takut","rasa tidak aman",
+        "tidak aman","was-was","tidak nyaman","suasana teror","teror","kepanikan","panik",
+        "menimbulkan kepanikan","kecemasan masyarakat","rasa khawatir","trauma","menimbulkan trauma",
+        "taruma","mengganggu masyarakat","mengganggu ketertiban","gangguan ketertiban","ketertiban umum",
+        "tidak kondusif","ketidaknyamanan masyarakat","mengganggu kehidupan masyarakat",
+        "mengganggu aktivitas masyarakat","sadis","tercela","norma-norma yang hidup","kriminogen",
+        "pemicu kejahatan","rasa keadilan masyarakat","keadilan masyarakat","tidak patut dicontoh",
+        "generasi muda","mengganggu segala aspek kehidupan","anak kehilangan","keluarga merasa malu",
+        "bahan perbincangan masyarakat","efek samping yang sangat besar","membahayakan",
+        "keselamatan masyarakat","recidivis","residivis","pernah dihukum","pernah dijatuhi hukuman",
+        "tidak menyesali","tidak merasa bersalah","tidak merasa menyesal","tidak ada penyesalan",
+        "tanpa penyesalan","berdasarkan hukum allah","perbuatan jihad"
     ]):
-        labels.add("Kerugian Materiil/Fasilitas")
+        return "Meresahkan Masyarakat"
 
-    return list(labels) if labels else ["Tidak Diketahui"]
+    return "Lainnya"
+
+PRIORITY_AGG = [
+    "Mengancam Keamanan Negara", "Menimbulkan Korban Jiwa",
+    "Tidak Mendukung/Menghambat Program Pemerintah",
+    "Kerugian Materiil/Fasilitas", "Meresahkan Masyarakat", "Lainnya"
+]
+
+def pick_dominant_agg(classified_list):
+    if not classified_list or classified_list == ["Tidak Diketahui"]: 
+        return "Tidak Diketahui"
+    
+    for p in PRIORITY_AGG:
+        if p in classified_list: 
+            return p
+
+def normalize_aggravating(raw_source):
+    if not raw_source:
+        return []
+        
+    if isinstance(raw_source, str):
+        sources = re.split(r'-{3,}|\n', raw_source)
+    elif isinstance(raw_source, list):
+        sources = raw_source
+    else:
+        return []
+
+    categories = set()
+    for source in sources:
+        source_str = str(source).strip()
+        
+        if not source_str or source_str.lower() in ["none", "unknown", "tidak diketahui"]:
+            continue
+            
+        if len(source_str) > 3: 
+            kategori = classify_aggravating(source_str) 
+            
+            if kategori not in ["Data Tidak Lengkap", "Lainnya", "Tidak Diketahui"]:
+                categories.add(kategori)
+
+    return sorted(list(categories)) if categories else ["Lainnya"]
 
 def process_and_classify_list(raw_text, classify_func):
-    if not raw_text or str(raw_text).strip() in ["", "nan", "Unknown", "Tidak Diketahui"]:
+    # 1. Tangani jika kosong
+    if not raw_text or str(raw_text).strip() in ["", "nan", "Unknown", "Tidak Diketahui", "[]"]:
         return ["Tidak Diketahui"]
     
-    parts = str(raw_text).split("\n---\n")
-    categories = set()
+    # 2. BACA TIPE DATANYA
+    if isinstance(raw_text, str):
+        parts = str(raw_text).split("\n---\n")
+    elif isinstance(raw_text, list):
+        parts = raw_text
+    else:
+        return ["Tidak Diketahui"]
+
+    categories = []
 
     for part in parts:
-        part = part.strip()
+        part = str(part).strip()
         if len(part) > 3:
             result = classify_func(part)
+            
             if isinstance(result, list):
-                categories.update(result)
+                categories.extend(result)
             else:
-                categories.add(result)
+                categories.append(result)
 
-    if len(categories) > 1 and "Tidak Diketahui" in categories:
-        categories.discard("Tidak Diketahui")
-
-    return sorted(categories) if categories else ["Tidak Diketahui"]
+    valid_categories = [c for c in categories if c != "Tidak Diketahui"]
+    
+    if valid_categories:
+        return valid_categories 
+    else:
+        return ["Tidak Diketahui"]
 
 
 def normalize_evidence_items(data):
@@ -1518,6 +1665,8 @@ def process_file(data):
     data["why"]["classified_radicalization_sources"] = process_and_classify_list(raw_rad_sources, normalize_radicalization_sources) 
 
     classified_sources = data["why"]["classified_radicalization_sources"]
+    data["why"]["dominant_radicalization_category"] = pick_dominant_source(classified_sources)
+
     channel_result = classify_radicalization_channel(classified_sources)
     if channel_result not in ["Data Tidak Lengkap", "Lainnya", "Tidak Diketahui"]:
         data["why"]["radicalization_channel"] = channel_result
@@ -1529,6 +1678,9 @@ def process_file(data):
 
     raw_aggravating = data["why"].get("aggravating_factors", [])
     data["why"]["classified_aggravating_factors"] = process_and_classify_list(raw_aggravating, classify_aggravating)
+
+    classified_aggravating = data["why"]["classified_aggravating_factors"]
+    data["why"]["dominant_aggravating_factor"] = pick_dominant_agg(classified_aggravating)
 
     if "what" not in data or not isinstance(data["what"], dict):
         data["what"] = {}
